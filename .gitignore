@@ -1,0 +1,12 @@
+# .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env
+
+# Cloned repositories
+cloned_repo/
