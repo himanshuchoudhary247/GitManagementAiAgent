@@ -1,0 +1,4 @@
+requests
+PyGithub
+astor
+openai
