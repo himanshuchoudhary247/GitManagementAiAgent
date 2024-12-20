@@ -1,0 +1,42 @@
+2024-12-20 08:15:26,717:INFO:Initialized Llama3Client successfully.
+2024-12-20 08:15:26,717:INFO:Write permission confirmed for the directory: /Users/sudhanshu/demo-auth-repo/demo-auth-repo
+2024-12-20 08:16:03,304:INFO:Initialized Llama3Client successfully.
+2024-12-20 08:16:03,304:INFO:Write permission confirmed for the directory: /Users/sudhanshu/demo-auth-repo/demo-auth-repo
+2024-12-20 08:16:03,451:DEBUG:Starting new HTTPS connection (1): api.github.com:443
+2024-12-20 08:16:03,908:DEBUG:https://api.github.com:443 "GET /repos/username/repository HTTP/11" 401 95
+2024-12-20 08:16:03,910:ERROR:Failed to connect to GitHub: 401 {"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401"}
+2024-12-20 08:17:16,325:INFO:Initialized Llama3Client successfully.
+2024-12-20 08:17:16,325:INFO:Write permission confirmed for the directory: /Users/sudhanshu/demo-auth-repo/demo-auth-repo
+2024-12-20 08:17:16,480:DEBUG:Starting new HTTPS connection (1): api.github.com:443
+2024-12-20 08:17:16,969:DEBUG:https://api.github.com:443 "GET /repos/username/repository HTTP/11" 401 95
+2024-12-20 08:17:16,970:ERROR:Failed to connect to GitHub: 401 {"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401"}
+2024-12-20 08:18:00,006:INFO:Initialized Llama3Client successfully.
+2024-12-20 08:18:00,006:INFO:Write permission confirmed for the directory: /Users/sudhanshu/demo-auth-repo/demo-auth-repo
+2024-12-20 08:18:00,143:DEBUG:Starting new HTTPS connection (1): api.github.com:443
+2024-12-20 08:18:00,560:DEBUG:https://api.github.com:443 "GET /repos/username/repository HTTP/11" 401 95
+2024-12-20 08:18:00,562:ERROR:Failed to connect to GitHub: 401 {"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401"}
+2024-12-20 08:18:49,533:INFO:Initialized Llama3Client successfully.
+2024-12-20 08:18:49,533:INFO:Write permission confirmed for the directory: /Users/sudhanshu/demo-auth-repo/demo-auth-repo
+2024-12-20 08:18:49,641:DEBUG:Starting new HTTPS connection (1): api.github.com:443
+2024-12-20 08:18:50,086:DEBUG:https://api.github.com:443 "GET /repos/username/repository HTTP/11" 401 95
+2024-12-20 08:18:50,088:ERROR:Failed to connect to GitHub: 401 {"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401"}
+2024-12-20 08:24:38,864:INFO:Initialized Llama3Client successfully.
+2024-12-20 08:24:38,864:DEBUG:QueryUnderstandingAgent Prompt: User Query: Add a new function `authenticate_user` to handle OAuth2 authentication in the `auth/login.py` module.
+
+Please parse the above query and extract the key objectives. Respond in JSON format with a list of objectives.
+2024-12-20 08:24:38,865:ERROR:Llama 3 API Error: 
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+
+2024-12-20 08:24:38,865:ERROR:Failed to understand the query.
+2024-12-20 08:25:08,909:INFO:Initialized Llama3Client successfully.
+2024-12-20 08:25:08,909:INFO:Write permission confirmed for the directory: /Users/sudhanshu/demo-auth-repo/demo-auth-repo
+2024-12-20 08:25:09,069:DEBUG:Starting new HTTPS connection (1): api.github.com:443
+2024-12-20 08:25:09,487:DEBUG:https://api.github.com:443 "GET /repos/username/repository HTTP/11" 401 95
+2024-12-20 08:25:09,489:ERROR:Failed to connect to GitHub: 401 {"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401"}
