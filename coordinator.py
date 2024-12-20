@@ -7,14 +7,16 @@ from agents.answer_generation_agent import AnswerGenerationAgent
 from agents.code_writing_agent import CodeWritingAgent
 from memory_node import MemoryNode
 from utils.llama3_client import Llama3Client
-from utils import config
+from utils.github_handler import GitHubHandler
+from utils.code_utils import find_function_definitions, extract_json_from_response
+from utils import config  # Updated import
 import logging
 import sys
 import os
 import json
 
 class Coordinator:
-    def __init__(self, repo_path):
+    def __init__(self, repo_path, use_gitrepo=False):
         # Initialize Logging
         logging.basicConfig(
             filename='agentic_rag_system.log',
@@ -45,20 +47,24 @@ class Coordinator:
         else:
             logging.info(f"Write permission confirmed for the directory: {repo_path}")
 
-        # Initialize GitHub Handler if GitHub interactions are enabled
-        if config.GITHUB_TOKEN and config.GITHUB_REPO_NAME:
-            from utils.github_handler import GitHubHandler
+        self.use_gitrepo = use_gitrepo
+
+        # Initialize GitHub Handler if GitHub interactions are enabled and use_gitrepo is True
+        if self.use_gitrepo and config.GITHUB_TOKEN and config.GITHUB_REPO_NAME:
             self.github_handler = GitHubHandler()
         else:
             self.github_handler = None
-            logging.warning("GitHub token or repository name not provided. GitHub integrations will be disabled.")
+            if self.use_gitrepo:
+                logging.warning("GitHub token or repository name not provided. GitHub integrations will be disabled.")
+            else:
+                logging.info("GitHub integrations are disabled as use_gitrepo is set to False.")
 
         # Initialize Agents with their respective memories
         self.query_understanding_agent = QueryUnderstandingAgent(self.llama3_client, self.query_understanding_memory)
         self.context_retrieval_agent = ContextRetrievalAgent(self.llama3_client, self.context_retrieval_memory)
         self.intermediate_processing_agent = IntermediateProcessingAgent(self.llama3_client, self.intermediate_processing_memory)
         self.answer_generation_agent = AnswerGenerationAgent(self.llama3_client, self.answer_generation_memory)
-        self.code_writing_agent = CodeWritingAgent(repo_path, self.code_writing_memory)
+        self.code_writing_agent = CodeWritingAgent(repo_path, self.code_writing_memory, use_gitrepo=self.use_gitrepo)
 
         self.repo_path = repo_path
 
@@ -121,8 +127,8 @@ class Coordinator:
         # Step 6: Write Code Changes
         self.code_writing_agent.write_code_changes(code_changes)
 
-        # Optional: Commit changes and create pull request if GitHub is configured
-        if self.github_handler:
+        # Optional: Commit changes and create pull request if GitHub is configured and use_gitrepo is True
+        if self.use_gitrepo and self.github_handler:
             commit_message = f"Update based on requirement: {requirement}"
             try:
                 self.github_handler.commit_changes(

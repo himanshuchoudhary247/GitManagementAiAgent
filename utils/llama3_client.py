@@ -1,7 +1,7 @@
 # utils/llama3_client.py
 
-import openai  # Ensure you have the openai package installed
-from utils import config
+from openai import OpenAI
+from utils import config  # Updated import
 import logging
 import sys
 import json
@@ -19,8 +19,10 @@ class Llama3Client:
             logging.error("Llama3 API key and base URL must be provided.")
             sys.exit("Error: Llama3 API key and base URL must be provided.")
         try:
-            openai.api_key = config.LLAMA3_API_KEY
-            openai.api_base = config.LLAMA3_API_URL
+            self.client = OpenAI(
+                api_key=config.LLAMA3_API_KEY,
+                base_url=config.LLAMA3_API_URL
+            )
             logging.info("Initialized Llama3Client successfully.")
         except Exception as e:
             logging.error(f"Failed to initialize Llama3 client: {e}")
@@ -28,10 +30,10 @@ class Llama3Client:
 
     def generate(self, prompt, max_tokens=150, temperature=0.7):
         try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4",  # Replace with the appropriate model name
+            response = self.client.chat.completions.create(
+                model="llama3.1-70b",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "system", "content": "Assistant is a large language model trained by OpenAI."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=max_tokens,

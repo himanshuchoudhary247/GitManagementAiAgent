@@ -2,6 +2,7 @@
 
 import logging
 import json
+from utils.code_utils import extract_json_from_response
 
 class AnswerGenerationAgent:
     def __init__(self, llama3_client, memory):
@@ -17,21 +18,51 @@ class AnswerGenerationAgent:
                 f"Repository Path: {repo_path}\n\n"
                 "Based on the above information, generate the necessary code changes to achieve the objectives. "
                 "Specify whether to add new functions or update existing ones. "
-                "Provide the changes in a structured JSON format with 'action', 'file', and 'code' keys."
+                "Provide the changes in a structured JSON format with 'action', 'file', and 'code' keys. "
+                "Use only 'add' for adding new functions and 'update' for modifying existing ones. "
+                "Do not include any additional text, explanations, or surrounding context."
             )
             logging.debug(f"AnswerGenerationAgent Prompt: {prompt}")
             response = self.llama3_client.generate(prompt, max_tokens=500, temperature=0.5)
 
+            # Debugging: Print the raw response
+            print(f"Raw Response: {response}")
+            logging.debug(f"Raw Response: {response}")
+
             if not response:
-                logging.error("Failed to generate the answer.")
-                print("Error: Failed to generate the answer.")
+                logging.error("Received empty response from LLM.")
+                print("Error: Received empty response from LLM.")
                 return
 
-            # Parse JSON response
-            code_changes = self.parse_response(response)
-            self.memory.set('code_changes', code_changes)
-            logging.info(f"Generated Code Changes: {code_changes}")
-            print(f"Generated Code Changes: {code_changes}")
+            # Extract JSON from the response
+            code_changes_json = extract_json_from_response(response)
+            if not code_changes_json:
+                logging.error("Failed to extract JSON from the response.")
+                print("Error: Failed to extract JSON from the response.")
+                return
+
+            # Handle both dict and list
+            if isinstance(code_changes_json, dict):
+                code_changes = code_changes_json.get('code_changes', [])
+            elif isinstance(code_changes_json, list):
+                code_changes = code_changes_json
+            else:
+                code_changes = []
+
+            # Filter out unsupported actions
+            supported_actions = ['add', 'update']
+            filtered_code_changes = []
+            for change in code_changes:
+                action = change.get('action', '').lower()
+                if action in supported_actions:
+                    filtered_code_changes.append(change)
+                else:
+                    logging.warning(f"Unsupported action '{action}' detected. Skipping this change.")
+                    print(f"Warning: Unsupported action '{action}' detected. Skipping this change.")
+
+            self.memory.set('code_changes', filtered_code_changes)
+            logging.info(f"Generated Code Changes: {filtered_code_changes}")
+            print(f"Generated Code Changes: {filtered_code_changes}")
 
         except Exception as e:
             logging.error(f"Error in AnswerGenerationAgent: {e}")
@@ -58,13 +89,9 @@ class AnswerGenerationAgent:
         }
         """
         try:
-            data = json.loads(response)
+            data = extract_json_from_response(response)
             code_changes = data.get('code_changes', [])
             return code_changes
-        except json.JSONDecodeError as e:
-            logging.error(f"JSON decode error in AnswerGenerationAgent: {e}")
-            print(f"Error: Invalid JSON format in response: {e}")
-            return []
         except Exception as e:
             logging.error(f"Error parsing response in AnswerGenerationAgent: {e}")
             print(f"Error: Failed to parse code changes: {e}")
