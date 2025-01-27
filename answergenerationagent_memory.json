@@ -1,0 +1,19 @@
+{
+    "code_changes": [
+        {
+            "action": "add",
+            "file": "/Users/sudhanshu/chat_model/main.py",
+            "code": "import mimetypes\nimport chardet\nimport magic\nimport ast"
+        },
+        {
+            "action": "add",
+            "file": "/Users/sudhanshu/chat_model/main.py",
+            "code": "def identify_language(file_path):\n    try:\n        with open(file_path, 'rb') as file:\n            result = chardet.detect(file.read())\n            charenc = result['encoding']\n            with open(file_path, 'r', encoding=charenc) as file:\n                try:\n                    tree = ast.parse(file.read())\n                    return 'Python'\n                except SyntaxError:\n                    pass\n            mime_type = mimetypes.guess_type(file_path)[0]\n            if mime_type and 'text/x-python' in mime_type:\n                return 'Python'\n            file_type = magic.from_file(file_path, mime=True)\n            if file_type and 'text/x-python' in file_type:\n                return 'Python'\n    except Exception as e:\n        print(f'Error: {str(e)}')\n    return 'Unknown'"
+        },
+        {
+            "action": "add",
+            "file": "/Users/sudhanshu/chat_model/main.py",
+            "code": "file_path = '/Users/sudhanshu/chat_model/main.py'\nlanguage = identify_language(file_path)\nprint(f'The programming language used in the {file_path} file is: {language}')"
+        }
+    ]
+}

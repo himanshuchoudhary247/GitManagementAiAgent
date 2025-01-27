@@ -1,0 +1,10 @@
+{
+    "relevant_functions": [
+        "open()",
+        "read()",
+        "mimetypes",
+        "chardet",
+        "python-magic",
+        "ast"
+    ]
+}

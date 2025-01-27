@@ -1,75 +1,46 @@
 # agents/intermediate_processing_agent.py
 
 import logging
-import json
-from utils.code_utils import extract_json_from_response
+from utils.cli_utils import print_with_breaker
+from utils.llama3_client import Llama3Client
+from utils.code_utils import extract_json_from_response  # Added import
 
 class IntermediateProcessingAgent:
-    def __init__(self, llama3_client, memory):
+    def __init__(self, llama3_client: Llama3Client, memory):
         self.llama3_client = llama3_client
         self.memory = memory
 
-    def process(self, objectives, relevant_functions, repo_path):
+    def process(self, objectives: list, relevant_functions: list, repo_path: str):
+        """
+        Processes the objectives and relevant functions to prepare for answer generation.
+        
+        Parameters:
+        - objectives (list): List of objectives to process.
+        - relevant_functions (list): List of relevant functions or modules.
+        - repo_path (str): Path to the repository.
+        """
         try:
             prompt = (
-                f"Objectives: {json.dumps(objectives, indent=2)}\n\n"
-                f"Relevant Functions: {json.dumps(relevant_functions, indent=2)}\n\n"
+                f"Objectives: {objectives}\n"
+                f"Relevant Functions: {relevant_functions}\n"
                 f"Repository Path: {repo_path}\n\n"
-                "Please analyze the above information and identify any dependencies or additional context required to achieve the objectives. "
-                "Respond **only** in valid JSON format with any additional files or functions needed. "
-                "Do not include any additional text, explanations, or surrounding context."
+                "Process the objectives and relevant functions to identify additional context or dependencies required for answer generation. "
+                "Provide the additional context in JSON format with a key `additional_context` containing relevant information."
+                "No extra text."
             )
             logging.debug(f"IntermediateProcessingAgent Prompt: {prompt}")
-            response = self.llama3_client.generate(prompt, max_tokens=300, temperature=0.5)
+            response = self.llama3_client.generate(prompt, max_tokens=300, temperature=0.3)
+            logging.debug(f"IntermediateProcessingAgent Response: {response}")
 
-            # Debugging: Print the raw response
-            print(f"Raw Response: {response}")
-            logging.debug(f"Raw Response: {response}")
-
-            if not response:
-                logging.error("Received empty response from LLM.")
-                print("Error: Received empty response from LLM.")
-                return
-
-            # Extract JSON from the response
-            additional_context_json = extract_json_from_response(response)
-            if not additional_context_json:
-                logging.error("Failed to extract JSON from the response.")
-                print("Error: Failed to extract JSON from the response.")
-                return
-
-            # Handle both dict and list
-            if isinstance(additional_context_json, dict):
-                additional_context = additional_context_json.get('additional_context', [])
-            elif isinstance(additional_context_json, list):
-                additional_context = additional_context_json
+            context_json = extract_json_from_response(response)
+            if context_json and isinstance(context_json, dict):
+                self.memory.set('additional_context', context_json.get('additional_context', []))
+                logging.info(f"Retrieved additional context: {context_json.get('additional_context', [])}")
+                print_with_breaker(f"Retrieved additional context: {context_json.get('additional_context', [])}")
             else:
-                additional_context = []
-
-            self.memory.set('additional_context', additional_context)
-            logging.info(f"Additional Context: {additional_context}")
-            print(f"Additional Context: {additional_context}")
+                logging.warning("Failed to extract additional context from the response.")
+                print_with_breaker("Warning: Failed to extract additional context from the response.")
 
         except Exception as e:
             logging.error(f"Error in IntermediateProcessingAgent: {e}")
-            print(f"Error: Failed to process intermediate data: {e}")
-
-    def parse_response(self, response):
-        """
-        Parses the JSON response into additional context.
-        Expected format:
-        {
-            "additional_context": [
-                {"file": "auth/utils.py", "function": "encrypt_password"},
-                ...
-            ]
-        }
-        """
-        try:
-            data = extract_json_from_response(response)
-            additional_context = data.get('additional_context', [])
-            return additional_context
-        except Exception as e:
-            logging.error(f"Error parsing response in IntermediateProcessingAgent: {e}")
-            print(f"Error: Failed to parse additional context: {e}")
-            return []
+            print_with_breaker(f"Error: Failed to process objectives: {e}")

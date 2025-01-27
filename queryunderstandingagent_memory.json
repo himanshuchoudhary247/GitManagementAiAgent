@@ -1,0 +1,9 @@
+{
+    "objectives": [
+        "Identify the GUI components that need to be updated",
+        "Determine the colour options to be provided to the user",
+        "Create a user interface element to select the new colour",
+        "Implement a function to update the GUI colour based on user selection",
+        "Test the colour update feature for different GUI components and colour options"
+    ]
+}

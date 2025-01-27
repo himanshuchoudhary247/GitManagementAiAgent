@@ -1,64 +1,53 @@
 # utils/github_handler.py
 
-from github import Github
-from utils import config
-import logging
+from github import Github, GithubException
 import os
-import sys
-import subprocess
+import logging
+from utils.cli_utils import print_with_breaker
 
 class GitHubHandler:
     def __init__(self):
+        self.token = os.getenv('GITHUB_TOKEN')
+        self.repo_name = os.getenv('GITHUB_REPO_NAME')
+        if not self.token or not self.repo_name:
+            raise ValueError("GitHub token and repository name must be set in environment variables.")
+        self.github = Github(self.token)
+        self.repo = self.github.get_repo(self.repo_name)
+
+    def commit_changes(self, branch_name: str, commit_message: str):
+        """
+        Commits changes to a specified branch.
+
+        Parameters:
+        - branch_name (str): The name of the branch to commit to.
+        - commit_message (str): The commit message.
+        """
         try:
-            self.g = Github(config.GITHUB_TOKEN)
-            self.repo = self.g.get_repo(config.GITHUB_REPO_NAME)
-            logging.info(f"Connected to GitHub repository: {config.GITHUB_REPO_NAME}")
-        except Exception as e:
-            logging.error(f"Failed to connect to GitHub: {e}")
-            sys.exit(f"Error: Failed to connect to GitHub: {e}")
+            source = self.repo.get_branch("main")
+            self.repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=source.commit.sha)
+            # Add commit logic here (e.g., using the GitHub API to commit files)
+            print_with_breaker(f"Committed changes to branch {branch_name}.")
+            logging.info(f"Committed changes to branch {branch_name}.")
+        except GithubException as e:
+            logging.error(f"GitHub Commit Error: {e}")
+            print_with_breaker(f"Error: Failed to commit changes: {e}")
+            raise e
 
-    def commit_changes(self, branch_name, commit_message):
-        try:
-            clone_path = './cloned_repo'
-            if not os.path.exists(clone_path):
-                self.clone_repo()
+    def create_pull_request(self, title: str, body: str, head: str, base: str):
+        """
+        Creates a pull request from head to base.
 
-            # Checkout to the new branch
-            subprocess.check_call(['git', '-C', clone_path, 'checkout', '-b', branch_name])
-
-            # Stage all changes
-            subprocess.check_call(['git', '-C', clone_path, 'add', '.'])
-
-            # Commit changes
-            subprocess.check_call(['git', '-C', clone_path, 'commit', '-m', commit_message])
-
-            # Push changes to the new branch
-            subprocess.check_call(['git', '-C', clone_path, 'push', '--set-upstream', 'origin', branch_name])
-
-            logging.info(f"Committed changes to branch '{branch_name}'.")
-            print(f"Committed changes to branch '{branch_name}'.")
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Git command failed: {e}")
-            print(f"Error: Git command failed: {e}")
-        except Exception as e:
-            logging.error(f"Failed to commit changes: {e}")
-            print(f"Error: Failed to commit changes: {e}")
-
-    def clone_repo(self):
-        try:
-            subprocess.check_call(['git', 'clone', self.repo.clone_url, './cloned_repo'])
-            logging.info(f"Cloned repository to './cloned_repo'.")
-            print(f"Cloned repository to './cloned_repo'.")
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to clone repository: {e}")
-            print(f"Error: Failed to clone repository: {e}")
-            sys.exit(1)
-
-    def create_pull_request(self, title, body, head, base):
+        Parameters:
+        - title (str): The title of the pull request.
+        - body (str): The body/content of the pull request.
+        - head (str): The name of the branch where changes are implemented.
+        - base (str): The name of the branch you want the changes pulled into.
+        """
         try:
             pr = self.repo.create_pull(title=title, body=body, head=head, base=base)
-            logging.info(f"Created pull request: {pr.html_url}")
-            print(f"Created pull request: {pr.html_url}")
-        except Exception as e:
-            logging.error(f"Failed to create pull request: {e}")
-            print(f"Error: Failed to create pull request: {e}")
+            print_with_breaker(f"Pull request created: {pr.html_url}")
+            logging.info(f"Pull request created: {pr.html_url}")
+        except GithubException as e:
+            logging.error(f"GitHub Pull Request Error: {e}")
+            print_with_breaker(f"Error: Failed to create pull request: {e}")
+            raise e

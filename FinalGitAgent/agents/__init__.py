@@ -9,3 +9,4 @@ from .self_reflection_agent import SelfReflectionAgent
 from .undo_agent import UndoAgent
 from .code_validation_agent import CodeValidationAgent
 from .code_completer_agent import CodeCompleterAgent
+from .repository_mapping_agent import RepositoryMappingAgent
