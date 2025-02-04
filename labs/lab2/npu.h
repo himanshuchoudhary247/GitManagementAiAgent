@@ -1,21 +1,11 @@
+// npu.h
+
 #ifndef NPU_H
 #define NPU_H
 
 #include <cstdint>
-
-// Define constants for NPU SFRs
-#define SAM_NPU_CTRL_OFFSET          0x1000
-#define SAM_NPU_STATUS_OFFSET        0x1004
-#define SAM_NPU_IFM_WIDTH_OFFSET     0x1008
-#define SAM_NPU_IFM_HEIGHT_OFFSET    0x100C
-#define SAM_NPU_OFM_WIDTH_OFFSET     0x1010
-#define SAM_NPU_OFM_HEIGHT_OFFSET    0x1014
-#define SAM_NPU_WEIGHT_WIDTH_OFFSET  0x1018
-#define SAM_NPU_WEIGHT_HEIGHT_OFFSET 0x101C
-
-// Define bit masks
-#define SAM_NPU_CTRL_START_BIT       0x1
-#define SAM_NPU_STATUS_DONE_BIT      0x1
+#include <unordered_map>
+#include "sfr.h"
 
 class NPU {
 public:
@@ -25,20 +15,29 @@ public:
     // Destructor
     ~NPU();
 
-    // Write to a specific SFR based on offset
-    void write(uint32_t a_offset, const uint32_t &a_value);
+    // Write function: Takes offset and value
+    void write(uint32_t offset, const uint32_t& value);
 
-    // Read from a specific SFR based on offset
-    void read(uint32_t a_offset, uint32_t &a_value) const;
+    // Read function: Takes offset and reference to store value
+    void read(uint32_t offset, uint32_t& value) const;
+
+    // Configuration functions
+    void configure_ifm(uint32_t width, uint32_t height);
+    void configure_ofm(uint32_t width, uint32_t height);
+    void configure_weight(uint32_t width, uint32_t height);
 
 private:
-    // Forward declaration of the implementation class
-    class NPUImpl;
+    // SFRs for NPU
+    SFR ctrl;
+    SFR status;
+    SFR ifm_info;
+    SFR wt_info;
+    SFR ofm_info;
 
-    // Pointer to the implementation
-    NPUImpl* m_impl;
+    // Mapping from offset to SFR pointers for easy access
+    std::unordered_map<uint32_t, SFR*> sfr_map;
 
-    // Initiates the NPU operation
+    // Private function to start NPU operation
     void start_operation();
 };
 

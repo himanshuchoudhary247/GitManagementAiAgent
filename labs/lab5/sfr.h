@@ -5,8 +5,8 @@
 #include <cstdint>
 
 // SFR module definition.
-// Provides basic register operations: write, read, set, and get.
-// Additionally, it has a dummy SC_METHOD and an SC_THREAD process.
+// Provides basic register operations: write, read, set, get, and reset.
+// Also includes two dummy processes (an SC_METHOD and an SC_THREAD) that print messages.
 SC_MODULE(SFR) {
 public:
     // Constructor.
@@ -17,7 +17,6 @@ public:
         uint32_t hw_read_mask,
         uint32_t hw_write_mask,
         uint32_t reset_value);
-
     // Destructor.
     ~SFR();
 
@@ -26,13 +25,14 @@ public:
     void read(uint32_t &output_value) const;
     void set(const uint32_t &input_value);
     void get(uint32_t &output_value) const;
+    // Reset the register value to its reset value.
+    void reset();
 
     // Dummy processes.
-    void dummy_method();   // SC_METHOD that prints module name, process name, and simulation time.
-    void dummy_thread();   // SC_THREAD that prints its name and simulation time.
+    void dummy_method();   // SC_METHOD: prints module name, process name, and simulation time.
+    void dummy_thread();   // SC_THREAD: prints its process name and simulation time.
 
 private:
-    // Member variables.
     uint32_t m_offset;           // SFR Offset.
     uint32_t m_value;            // Current value.
     uint32_t m_sw_read_mask;     // Software read mask.

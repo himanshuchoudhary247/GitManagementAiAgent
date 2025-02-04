@@ -1,47 +1,64 @@
-#include "sfr.h"
+// main.cpp
+
 #include <iostream>
+#include "sfr.h"
 
-#define SAM_SFR_TEST_VALUE 0xFFFFFFFF
-
-int main() {
-    // Creating 5 SFR objects with the specified configurations
+int main()
+{
+    // Initialize 5 SFRs with given parameters
     SFR ctrl(0x00000000, 0xFFFFFFFE, 0x00000001, 0xFFFFFFFF, 0x00000000, 0x0);
     SFR status(0x00000004, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x00000003, 0x0);
-    SFR ifm_info(0x00000010, 0xFFFFFFFF, 0x0FFF0FFF0, 0xFFFFFFFF, 0x00000000, 0x0);
-    SFR wt_info(0x00000014, 0xFFFFFFFF, 0x0FFF0FFF0, 0xFFFFFFFF, 0x00000000, 0x0);
-    SFR ofm_info(0x00000018, 0xFFFFFFFF, 0x0FFF0FFF0, 0xFFFFFFFF, 0x00000000, 0x0);
+    SFR ifm_info(0x00000010, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
+    SFR wt_info(0x00000014, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
+    SFR ofm_info(0x00000018, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
 
-    uint32_t I_read_value = 0;
+    // Array of SFR pointers and their names for easy iteration
+    SFR* sfrs[] = { &ctrl, &status, &ifm_info, &wt_info, &ofm_info };
+    const char* sfr_names[] = { "ctrl", "status", "ifm_info", "wt_info", "ofm_info" };
+    const size_t num_sfrs = sizeof(sfrs) / sizeof(sfrs[0]);
 
-    // Writing and verifying ctrl
-    ctrl.write(SAM_SFR_TEST_VALUE);
-    ctrl.read(I_read_value);
-    std::cout << "CTRL Read Value: 0x" << std::hex << I_read_value
-              << " (Expected: 0x" << (SAM_SFR_TEST_VALUE & 0xFFFFFFFE) << ")\n";
+    // Value to write
+    uint32_t write_value = 0xFFFFFFFF;
 
-    // Writing and verifying status
-    status.write(SAM_SFR_TEST_VALUE);
-    status.read(I_read_value);
-    std::cout << "STATUS Read Value: 0x" << std::hex << I_read_value
-              << " (Expected: 0x" << (SAM_SFR_TEST_VALUE & 0xFFFFFFFF) << ")\n";
+    // Perform external/SW write to each SFR
+    for (size_t i = 0; i < num_sfrs; ++i) {
+        sfrs[i]->write(write_value);
+    }
 
-    // Writing and verifying ifm_info
-    ifm_info.write(SAM_SFR_TEST_VALUE);
-    ifm_info.read(I_read_value);
-    std::cout << "IFM_INFO Read Value: 0x" << std::hex << I_read_value
-              << " (Expected: 0x" << (SAM_SFR_TEST_VALUE & 0x0FFF0FFF0) << ")\n";
+    // Verify the read values
+    for (size_t i = 0; i < num_sfrs; ++i) {
+        uint32_t read_value = 0;
+        sfrs[i]->read(read_value);
 
-    // Writing and verifying wt_info
-    wt_info.write(SAM_SFR_TEST_VALUE);
-    wt_info.read(I_read_value);
-    std::cout << "WT_INFO Read Value: 0x" << std::hex << I_read_value
-              << " (Expected: 0x" << (SAM_SFR_TEST_VALUE & 0x0FFF0FFF0) << ")\n";
+        // Determine the expected value based on the SW read mask
+        uint32_t expected_value;
+        switch (i) {
+            case 0: // ctrl
+                expected_value = write_value & 0xFFFFFFFE;
+                break;
+            case 1: // status
+                expected_value = write_value & 0xFFFFFFFF;
+                break;
+            case 2: // ifm_info
+            case 3: // wt_info
+            case 4: // ofm_info
+                expected_value = write_value & 0x0FFF0FFF;
+                break;
+            default:
+                expected_value = 0;
+        }
 
-    // Writing and verifying ofm_info
-    ofm_info.write(SAM_SFR_TEST_VALUE);
-    ofm_info.read(I_read_value);
-    std::cout << "OFM_INFO Read Value: 0x" << std::hex << I_read_value
-              << " (Expected: 0x" << (SAM_SFR_TEST_VALUE & 0x0FFF0FFF0) << ")\n";
+        // Check if the read value matches the expected value
+        if (read_value == expected_value) {
+            std::cout << sfr_names[i] << " read value matches expected value: 0x" 
+                      << std::hex << read_value << std::dec << std::endl;
+        }
+        else {
+            std::cout << sfr_names[i] << " read value does NOT match expected value." 
+                      << " Expected: 0x" << std::hex << expected_value 
+                      << ", Got: 0x" << read_value << std::dec << std::endl;
+        }
+    }
 
     return 0;
 }

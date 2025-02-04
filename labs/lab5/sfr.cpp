@@ -1,7 +1,6 @@
 #include "sfr.h"
 #include <iostream>
 
-// Constructor.
 SFR::SFR(sc_core::sc_module_name name,
          uint32_t offset,
          uint32_t sw_read_mask,
@@ -20,52 +19,51 @@ SFR::SFR(sc_core::sc_module_name name,
 {
     // Register the dummy SC_METHOD process.
     SC_METHOD(dummy_method);
-    // Let it run at simulation initialization (remove dont_initialize() so it runs automatically).
-    
+    // It will be invoked at simulation initialization.
+
     // Register the dummy SC_THREAD process.
     SC_THREAD(dummy_thread);
 }
 
 SFR::~SFR() {
-    // Nothing to clean up.
+    // Nothing to delete.
 }
 
 void SFR::write(const uint32_t &input_value) {
-    // Update only bits allowed by the SW write mask.
+    // Update only the bits allowed by the software write mask.
     m_value = (m_value & ~m_sw_write_mask) | (input_value & m_sw_write_mask);
 }
 
 void SFR::read(uint32_t &output_value) const {
-    // Return only bits allowed by the SW read mask.
+    // Return only the bits allowed by the software read mask.
     output_value = m_value & m_sw_read_mask;
 }
 
 void SFR::set(const uint32_t &input_value) {
-    // Update only bits allowed by the HW write mask.
+    // Update only the bits allowed by the hardware write mask.
     m_value = (m_value & ~m_hw_write_mask) | (input_value & m_hw_write_mask);
 }
 
 void SFR::get(uint32_t &output_value) const {
-    // Return only bits allowed by the HW read mask.
+    // Return only the bits allowed by the hardware read mask.
     output_value = m_value & m_hw_read_mask;
 }
 
-// Dummy SC_METHOD process.
-// This method prints the module name, process name ("dummy_method"),
-// and the current simulation time.
+void SFR::reset() {
+    m_value = m_reset_value;
+    std::cout << "[" << name() << "] reset() called. m_value set to " 
+              << m_reset_value << " at time " << sc_time_stamp() << std::endl;
+}
+
 void SFR::dummy_method() {
-    std::cout << "[" << this->name() << "] dummy_method called at time " 
+    std::cout << "[" << name() << "] dummy_method called at time " 
               << sc_time_stamp() << std::endl;
 }
 
-// Dummy SC_THREAD process.
-// This thread prints its process name ("dummy_thread") and simulation time,
-// then waits for 10 ns and prints again.
 void SFR::dummy_thread() {
-    std::cout << "[" << this->name() << "] dummy_thread starting at time " 
+    std::cout << "[" << name() << "] dummy_thread starting at time " 
               << sc_time_stamp() << std::endl;
     wait(10, SC_NS);
-    std::cout << "[" << this->name() << "] dummy_thread resumed at time " 
+    std::cout << "[" << name() << "] dummy_thread resumed at time " 
               << sc_time_stamp() << std::endl;
-    // End thread (or you can loop indefinitely if desired).
 }

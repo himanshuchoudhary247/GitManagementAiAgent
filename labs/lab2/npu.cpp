@@ -1,122 +1,100 @@
+// npu.cpp
+
 #include "npu.h"
-#include "sfr.h"
-#include <iostream>
 
-// Implementation class to hide SFR details from main
-class NPU::NPUImpl {
-public:
-    // SFR Objects
-    SFR m_ctrl;
-    SFR m_status;
-    SFR m_ifm_width;
-    SFR m_ifm_height;
-    SFR m_ofm_width;
-    SFR m_ofm_height;
-    SFR m_weight_width;
-    SFR m_weight_height;
-
-    // Constructor initializes all SFRs
-    NPUImpl()
-        : m_ctrl(SAM_NPU_CTRL_OFFSET, 0xFFFFFFFF, SAM_NPU_CTRL_START_BIT,
-                 0xFFFFFFFF, SAM_NPU_CTRL_START_BIT, 0x0),
-          m_status(SAM_NPU_STATUS_OFFSET, SAM_NPU_STATUS_DONE_BIT, 0x0,
-                  SAM_NPU_STATUS_DONE_BIT, 0x0, 0x0),
-          m_ifm_width(SAM_NPU_IFM_WIDTH_OFFSET, 0xFFFFFFFF, 0xFFFFFFFF,
-                     0xFFFFFFFF, 0xFFFFFFFF, 0x10),
-          m_ifm_height(SAM_NPU_IFM_HEIGHT_OFFSET, 0xFFFFFFFF, 0xFFFFFFFF,
-                      0xFFFFFFFF, 0xFFFFFFFF, 18),
-          m_ofm_width(SAM_NPU_OFM_WIDTH_OFFSET, 0xFFFFFFFF, 0xFFFFFFFF,
-                     0xFFFFFFFF, 0xFFFFFFFF, 14),
-          m_ofm_height(SAM_NPU_OFM_HEIGHT_OFFSET, 0xFFFFFFFF, 0xFFFFFFFF,
-                      0xFFFFFFFF, 0xFFFFFFFF, 16),
-          m_weight_width(SAM_NPU_WEIGHT_WIDTH_OFFSET, 0xFFFFFFFF, 0xFFFFFFFF,
-                        0xFFFFFFFF, 0xFFFFFFFF, 0x3),
-          m_weight_height(SAM_NPU_WEIGHT_HEIGHT_OFFSET, 0xFFFFFFFF, 0xFFFFFFFF,
-                         0xFFFFFFFF, 0xFFFFFFFF, 0x3) {}
-};
+// Define SFR offsets
+constexpr uint32_t CTRL_OFFSET     = 0x00000000;
+constexpr uint32_t STATUS_OFFSET   = 0x00000004;
+constexpr uint32_t IFM_INFO_OFFSET = 0x00000010;
+constexpr uint32_t WT_INFO_OFFSET  = 0x00000014;
+constexpr uint32_t OFM_INFO_OFFSET = 0x00000018;
 
 // Constructor
-NPU::NPU() : m_impl(new NPUImpl()) {}
+NPU::NPU()
+    : ctrl(CTRL_OFFSET, 0xFFFFFFFE, 0x00000001, 0xFFFFFFFF, 0x00000000, 0x0),
+      status(STATUS_OFFSET, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x00000003, 0x0),
+      ifm_info(IFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0),
+      wt_info(WT_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0),
+      ofm_info(OFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0)
+{
+    // Initialize the SFR mapping
+    sfr_map[CTRL_OFFSET] = &ctrl;
+    sfr_map[STATUS_OFFSET] = &status;
+    sfr_map[IFM_INFO_OFFSET] = &ifm_info;
+    sfr_map[WT_INFO_OFFSET] = &wt_info;
+    sfr_map[OFM_INFO_OFFSET] = &ofm_info;
+}
 
 // Destructor
-NPU::~NPU() {
-    delete m_impl;
+NPU::~NPU()
+{
+    // No dynamic memory to clean up
 }
 
-// Write to a specific SFR based on offset
-void NPU::write(uint32_t a_offset, const uint32_t &a_value) {
-    if (a_offset == SAM_NPU_CTRL_OFFSET) {
-        m_impl->m_ctrl.write(a_value);
-        // Check if start bit is set
-        uint32_t I_read_value = 0;
-        m_impl->m_ctrl.read(I_read_value);
-        if (I_read_value & SAM_NPU_CTRL_START_BIT) {
-            start_operation();
+// Write function: Takes offset and value
+void NPU::write(uint32_t offset, const uint32_t& value)
+{
+    auto it = sfr_map.find(offset);
+    if (it != sfr_map.end()) {
+        it->second->write(value);
+
+        // If writing to CTRL, check if start bit is set
+        if (offset == CTRL_OFFSET) {
+            // Check if start bit (bit 0) is set
+            uint32_t ctrl_value = 0;
+            it->second->read(ctrl_value);
+            if (ctrl_value & 0x1) {
+                start_operation();
+            }
         }
     }
-    else if (a_offset == SAM_NPU_IFM_WIDTH_OFFSET) {
-        m_impl->m_ifm_width.write(a_value);
+    else {
+        // Handle invalid offset if necessary
     }
-    else if (a_offset == SAM_NPU_IFM_HEIGHT_OFFSET) {
-        m_impl->m_ifm_height.write(a_value);
-    }
-    else if (a_offset == SAM_NPU_OFM_WIDTH_OFFSET) {
-        m_impl->m_ofm_width.write(a_value);
-    }
-    else if (a_offset == SAM_NPU_OFM_HEIGHT_OFFSET) {
-        m_impl->m_ofm_height.write(a_value);
-    }
-    else if (a_offset == SAM_NPU_WEIGHT_WIDTH_OFFSET) {
-        m_impl->m_weight_width.write(a_value);
-    }
-    else if (a_offset == SAM_NPU_WEIGHT_HEIGHT_OFFSET) {
-        m_impl->m_weight_height.write(a_value);
-    }
-    else if (a_offset == SAM_NPU_STATUS_OFFSET) {
-        // STATUS SFR is typically read-only; ignore or handle accordingly
-        std::cout << "Attempt to write to STATUS SFR ignored.\n";
+}
+
+// Read function: Takes offset and reference to store value
+void NPU::read(uint32_t offset, uint32_t& value) const
+{
+    auto it = sfr_map.find(offset);
+    if (it != sfr_map.end()) {
+        it->second->read(value);
     }
     else {
-        std::cout << "Invalid SFR Offset: 0x" << std::hex << a_offset << "\n";
+        // Handle invalid offset if necessary
+        value = 0;
     }
 }
 
-// Read from a specific SFR based on offset
-void NPU::read(uint32_t a_offset, uint32_t &a_value) const {
-    if (a_offset == SAM_NPU_CTRL_OFFSET) {
-        m_impl->m_ctrl.read(a_value);
-    }
-    else if (a_offset == SAM_NPU_STATUS_OFFSET) {
-        m_impl->m_status.read(a_value);
-    }
-    else if (a_offset == SAM_NPU_IFM_WIDTH_OFFSET) {
-        m_impl->m_ifm_width.read(a_value);
-    }
-    else if (a_offset == SAM_NPU_IFM_HEIGHT_OFFSET) {
-        m_impl->m_ifm_height.read(a_value);
-    }
-    else if (a_offset == SAM_NPU_OFM_WIDTH_OFFSET) {
-        m_impl->m_ofm_width.read(a_value);
-    }
-    else if (a_offset == SAM_NPU_OFM_HEIGHT_OFFSET) {
-        m_impl->m_ofm_height.read(a_value);
-    }
-    else if (a_offset == SAM_NPU_WEIGHT_WIDTH_OFFSET) {
-        m_impl->m_weight_width.read(a_value);
-    }
-    else if (a_offset == SAM_NPU_WEIGHT_HEIGHT_OFFSET) {
-        m_impl->m_weight_height.read(a_value);
-    }
-    else {
-        std::cout << "Invalid SFR Offset: 0x" << std::hex << a_offset << "\n";
-        a_value = 0;
-    }
+// Configuration functions
+void NPU::configure_ifm(uint32_t width, uint32_t height)
+{
+    // Assuming IFM Width occupies bits [15:0] and IFM Height occupies bits [31:16]
+    uint32_t config_value = (height << 16) | (width & 0xFFFF);
+    ifm_info.write(config_value);
 }
 
-// Initiates the NPU operation by setting the STATUS done bit
-void NPU::start_operation() {
-    // Simulate NPU operation by setting the done bit
-    uint32_t I_set_value = SAM_NPU_STATUS_DONE_BIT;
-    m_impl->m_status.set(I_set_value);
+void NPU::configure_ofm(uint32_t width, uint32_t height)
+{
+    // Assuming OFM Width occupies bits [15:0] and OFM Height occupies bits [31:16]
+    uint32_t config_value = (height << 16) | (width & 0xFFFF);
+    ofm_info.write(config_value);
 }
 
+void NPU::configure_weight(uint32_t width, uint32_t height)
+{
+    // Assuming Weight Width occupies bits [15:0] and Weight Height occupies bits [31:16]
+    uint32_t config_value = (height << 16) | (width & 0xFFFF);
+    wt_info.write(config_value);
+}
+
+// Private function to start NPU operation
+void NPU::start_operation()
+{
+    // Simulate NPU operation by setting the STATUS SFR's done bit to 1
+    // Assuming done bit is bit 0
+    uint32_t status_value = 0;
+    status.get(status_value);
+    status_value |= 0x1; // Set done bit
+    status.set(status_value);
+}
