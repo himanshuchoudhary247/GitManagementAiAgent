@@ -9,6 +9,9 @@
 // plus two dummy processes that print messages.
 SC_MODULE(SFR) {
 public:
+    // Must include this macro in SystemC 2.3.2 when using SC_THREAD/SC_METHOD.
+    SC_HAS_PROCESS(SFR);
+
     // Constructor.
     SFR(sc_module_name name,
         uint32_t offset,

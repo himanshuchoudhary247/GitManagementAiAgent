@@ -19,12 +19,18 @@ NPU::NPU(sc_module_name name)
     : sc_module(name), m_enable_start(false)
 {
     // Instantiate SFR submodules.
-    ctrl = new SFR("ctrl", CTRL_OFFSET, 0xFFFFFFFE, 0x00000001, 0xFFFFFFFF, 0x00000000, 0x0);
-    status = new SFR("status", STATUS_OFFSET, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x00000003, 0x0);
-    int_clear = new SFR("int_clear", INT_CLEAR_OFFSET, 0xFFFFFFFC, 0x00000003, 0xFFFFFFFF, 0x00000000, 0x0);
-    ifm_info = new SFR("ifm_info", IFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
-    wt_info = new SFR("wt_info", WT_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
-    ofm_info = new SFR("ofm_info", OFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
+    ctrl = new SFR("ctrl", CTRL_OFFSET, 0xFFFFFFFE, 0x00000001,
+                   0xFFFFFFFF, 0x00000000, 0x0);
+    status = new SFR("status", STATUS_OFFSET, 0xFFFFFFFF, 0x00000000,
+                     0xFFFFFFFF, 0x00000003, 0x0);
+    int_clear = new SFR("int_clear", INT_CLEAR_OFFSET, 0xFFFFFFFC, 0x00000003,
+                        0xFFFFFFFF, 0x00000000, 0x0);
+    ifm_info = new SFR("ifm_info", IFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF,
+                      0xFFFFFFFF, 0x00000000, 0x0);
+    wt_info = new SFR("wt_info", WT_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF,
+                     0xFFFFFFFF, 0x00000000, 0x0);
+    ofm_info = new SFR("ofm_info", OFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF,
+                      0xFFFFFFFF, 0x00000000, 0x0);
 
     // Build the mapping.
     sfr_map[CTRL_OFFSET] = ctrl;
@@ -64,18 +70,17 @@ void NPU::write(uint32_t offset, const uint32_t &value) {
     if (it != sfr_map.end()) {
         if (offset == INT_CLEAR_OFFSET) {
             it->second->write(value);
-            uint32_t clear_val = value & 0x3; // only bits [1:0] are writable.
+            uint32_t clear_val = value & 0x3; // only bits [1:0] writable.
             uint32_t status_val = 0;
             status->get(status_val);
-            if (clear_val & 0x1) {
+            if (clear_val & 0x1)
                 status_val &= ~0x1; // clear DONE bit.
-            }
-            if (clear_val & 0x2) {
+            if (clear_val & 0x2)
                 status_val &= ~0x2; // clear ERROR bit.
-            }
             status->set(status_val);
             std::cout << "[" << name() << "] write: int_clear triggered. STATUS updated to 0x"
-                      << std::hex << status_val << std::dec << " at time " << sc_time_stamp() << std::endl;
+                      << std::hex << status_val << std::dec
+                      << " at time " << sc_time_stamp() << std::endl;
             it->second->reset();
             if (status_val == 0) {
                 o_interrupt.write(INT_IDLE);
@@ -89,11 +94,10 @@ void NPU::write(uint32_t offset, const uint32_t &value) {
                 it->second->read(ctrl_val);
                 if (ctrl_val & 0x1) {
                     if (m_enable_start) {
-                        // Instead of calling start_operation() directly,
-                        // spawn a dynamic process for start_operation.
+                        // Spawn a dynamic process to run start_operation.
                         sc_spawn(sc_bind(&NPU::start_operation, this), "dynamic_start_operation");
                     } else {
-                        std::cout << "[" << name() << "] write: CTRL trigger ignored because i_start_micro is 0 at time "
+                        std::cout << "[" << name() << "] write: CTRL trigger ignored because i_start_micro is 0 at time " 
                                   << sc_time_stamp() << std::endl;
                     }
                 }
@@ -104,11 +108,10 @@ void NPU::write(uint32_t offset, const uint32_t &value) {
 
 void NPU::read(uint32_t offset, uint32_t &value) const {
     std::unordered_map<uint32_t, SFR*>::const_iterator it = sfr_map.find(offset);
-    if (it != sfr_map.end()) {
+    if (it != sfr_map.end())
         it->second->read(value);
-    } else {
+    else
         value = 0;
-    }
 }
 
 void NPU::configure_ifm(uint32_t width, uint32_t height) {
@@ -130,7 +133,8 @@ void NPU::handle_reset() {
     if (i_reset.read() == true) {
         std::cout << "[" << name() << "] handle_reset: Reset detected at time " 
                   << sc_time_stamp() << ". Resetting all SFRs." << std::endl;
-        for (std::unordered_map<uint32_t, SFR*>::iterator it = sfr_map.begin(); it != sfr_map.end(); ++it) {
+        for (std::unordered_map<uint32_t, SFR*>::iterator it = sfr_map.begin();
+             it != sfr_map.end(); ++it) {
             it->second->reset();
         }
         o_interrupt.write(INT_IDLE);
@@ -138,7 +142,6 @@ void NPU::handle_reset() {
 }
 
 void NPU::end_of_elaboration() {
-    // At end-of-elaboration, drive the interrupt port to INT_IDLE.
     o_interrupt.write(INT_IDLE);
     std::cout << "[" << name() << "] end_of_elaboration: o_interrupt set to INT_IDLE ("
               << INT_IDLE << ") at time " << sc_time_stamp() << std::endl;

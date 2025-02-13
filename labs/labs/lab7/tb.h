@@ -5,9 +5,11 @@
 #include "npu.h"
 
 // Testbench (tb) module definition for Lab 7.
-// It instantiates the NPU and drives/monitors reset, interrupt, and micro‑start signals.
+// Instantiates the NPU and drives/monitors reset, interrupt, and micro‑start signals.
 SC_MODULE(tb) {
 public:
+    SC_HAS_PROCESS(tb);
+
     tb(sc_module_name name);
     ~tb();
 

@@ -7,13 +7,14 @@
 #include "sfr.h"
 
 // NPU module definition.
-// (Based on Lab 6, with the following modifications for Lab 7:)
-// • The static (direct) call to start_operation is removed.
-// • Instead, when a CTRL trigger is detected and micro‑start is enabled,
-//   the NPU spawns a dynamic process to execute start_operation.
-// • A dynamic thread process (dummy_thread) is spawned during end_of_elaboration.
+// Based on Lab 6, with Lab 7 modifications:
+// • Remove the static call to start_operation and instead spawn a dynamic process.
+// • Add a dynamic dummy_thread process spawned during end_of_elaboration.
 SC_MODULE(NPU) {
 public:
+    // Include SC_HAS_PROCESS macro.
+    SC_HAS_PROCESS(NPU);
+
     NPU(sc_module_name name);
     ~NPU();
 
@@ -25,13 +26,13 @@ public:
 
     void handle_reset();
     void end_of_elaboration();
-    void start_operation(); // Now to be invoked dynamically via sc_spawn.
-    void dummy_thread();    // New dynamic thread process.
+    void start_operation(); // This will be spawned dynamically.
+    void dummy_thread();    // Dynamic thread process spawned during end_of_elaboration.
     void check_start_micro(); // Updates m_enable_start based on i_start_micro.
 
     // Ports.
     sc_in<bool>  i_reset;       // Reset input.
-    sc_in<bool>  i_start_micro; // New micro-start control input.
+    sc_in<bool>  i_start_micro; // Micro-start control input.
     sc_out<int>  o_interrupt;   // Interrupt output.
 
     // Interrupt state definitions.

@@ -18,7 +18,7 @@ SFR::SFR(sc_module_name name,
       m_value(reset_value)
 {
     SC_METHOD(dummy_method);
-    // dummy_method will be invoked during initialization.
+    // dummy_method will execute during initialization.
     SC_THREAD(dummy_thread);
 }
 
