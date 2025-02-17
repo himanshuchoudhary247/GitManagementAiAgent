@@ -4,24 +4,22 @@
 #include <systemc.h>
 #include "npu.h"
 
-// Testbench module definition.
-// This module instantiates NPU and defines an SC_THREAD and an SC_METHOD.
+/**
+ * Testbench module for Lab 3.1.
+ * Instantiates NPU and exercises its SFR read/write operations.
+ * (The event_queue_demo_thread in NPU will print its triggers.)
+ */
 SC_MODULE(tb) {
 public:
-    // Constructor.
-    tb(sc_core::sc_module_name name);
-    // Destructor.
+    SC_HAS_PROCESS(tb);
+
+    tb(sc_module_name name);
     ~tb();
 
-    // Processes.
-    void basic_test();             // SC_THREAD process.
-    void handle_test_done_method(); // SC_METHOD process.
-
-    // Event to signal that the test is done.
-    sc_core::sc_event m_basic_test_done_event;
+    void basic_test();
 
 private:
-    NPU *npu_inst; // Pointer to the NPU instance.
+    NPU* npu_inst;
 };
 
 #endif // TB_H

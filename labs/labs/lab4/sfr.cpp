@@ -1,7 +1,7 @@
 #include "sfr.h"
 #include <iostream>
 
-SFR::SFR(sc_core::sc_module_name name,
+SFR::SFR(sc_module_name name,
          uint32_t offset,
          uint32_t sw_read_mask,
          uint32_t sw_write_mask,
@@ -17,49 +17,48 @@ SFR::SFR(sc_core::sc_module_name name,
       m_reset_value(reset_value),
       m_value(reset_value)
 {
-    // Register the dummy SC_METHOD process.
     SC_METHOD(dummy_method);
-    // (It will be invoked at simulation initialization.)
-    
-    // Register the dummy SC_THREAD process.
     SC_THREAD(dummy_thread);
 }
 
 SFR::~SFR() {
-    // No dynamic memory to free.
+    // Nothing special to free
 }
 
 void SFR::write(const uint32_t &input_value) {
+    // Only bits allowed by software write mask are updated
     m_value = (m_value & ~m_sw_write_mask) | (input_value & m_sw_write_mask);
 }
 
 void SFR::read(uint32_t &output_value) const {
+    // Only bits allowed by software read mask are returned
     output_value = m_value & m_sw_read_mask;
 }
 
 void SFR::set(const uint32_t &input_value) {
+    // Internal/HW write: only bits allowed by hw_write_mask
     m_value = (m_value & ~m_hw_write_mask) | (input_value & m_hw_write_mask);
 }
 
 void SFR::get(uint32_t &output_value) const {
+    // Internal/HW read: only bits allowed by hw_read_mask
     output_value = m_value & m_hw_read_mask;
 }
 
 void SFR::reset() {
+    // Reset to m_reset_value
     m_value = m_reset_value;
-    std::cout << "[" << this->name() << "] reset() called. m_value set to " 
-              << m_reset_value << " at time " << sc_time_stamp() << std::endl;
+    std::cout << "[" << name() << "] reset() called. m_value=" << m_reset_value
+              << " at time " << sc_time_stamp() << std::endl;
 }
 
+// Additional processes
 void SFR::dummy_method() {
-    std::cout << "[" << this->name() << "] dummy_method called at time " 
-              << sc_time_stamp() << std::endl;
+    std::cout << "[" << name() << "] dummy_method at " << sc_time_stamp() << std::endl;
 }
 
 void SFR::dummy_thread() {
-    std::cout << "[" << this->name() << "] dummy_thread starting at time " 
-              << sc_time_stamp() << std::endl;
+    std::cout << "[" << name() << "] dummy_thread start at " << sc_time_stamp() << std::endl;
     wait(10, SC_NS);
-    std::cout << "[" << this->name() << "] dummy_thread resumed at time " 
-              << sc_time_stamp() << std::endl;
+    std::cout << "[" << name() << "] dummy_thread resumed at " << sc_time_stamp() << std::endl;
 }

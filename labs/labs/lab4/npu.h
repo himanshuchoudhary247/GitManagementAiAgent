@@ -2,63 +2,53 @@
 #define NPU_H
 
 #include <systemc.h>
-#include <cstdint>
-#include <unordered_map>
 #include "sfr.h"
 
-// NPU module definition.
-// Instantiates five SFR submodules, provides SFR access functions, and
-// handles reset and interrupt signaling.
+/**
+ * NPU module for Lab 4.
+ * - Instantiates 5 SFR modules
+ * - Has an input port i_reset
+ * - Has an output port o_interrupt (3 states: IDLE=0, DONE=1, ERROR=2)
+ * - end_of_elaboration sets o_interrupt to IDLE (active low)
+ * - SC_METHOD handle_reset: sensitive to posedge of i_reset
+ * - Once done bit is set in status SFR, set o_interrupt=DONE
+ */
 SC_MODULE(NPU) {
 public:
-    // Constructor.
-    NPU(sc_core::sc_module_name name);
-    // Destructor.
+    // We define possible interrupt states as constants
+    static const int INT_IDLE  ;
+    static const int INT_DONE  ;
+    static const int INT_ERROR ;
+
+    SC_HAS_PROCESS(NPU);
+
+    NPU(sc_module_name name);
     ~NPU();
 
-    // SFR access functions.
+    // SFR read/write
     void write(uint32_t offset, const uint32_t &value);
     void read(uint32_t offset, uint32_t &value) const;
-    void configure_ifm(uint32_t width, uint32_t height);
-    void configure_ofm(uint32_t width, uint32_t height);
-    void configure_weight(uint32_t width, uint32_t height);
 
-    // Reset handling method: called on positive edge of i_reset.
-    void handle_reset();
+    // Ports
+    sc_in<bool> i_reset;          // reset input
+    sc_out<int> o_interrupt;      // interrupt output
 
-    // Overridden end_of_elaboration callback: drive the interrupt port with a stable value.
-    virtual void end_of_elaboration() override;
-
-    // Simulate NPU operation.
-    void start_operation();
-
-    // Ports for reset and interrupt.
-    sc_in<bool>  i_reset;      // Input port for reset.
-    sc_out<int>  o_interrupt;  // Output port for interrupt.
-                              // Drives three values: IDLE, DONE, ERROR.
-
-    // Interrupt state definitions.
-    static const int INT_IDLE;   // e.g., 0 (active low)
-    static const int INT_DONE;   // e.g., 1
-    static const int INT_ERROR;  // e.g., 2
+    // end_of_elaboration
+    void end_of_elaboration();
 
 private:
-    // Offset definitions.
-    static const uint32_t CTRL_OFFSET;    // 0x00000000
-    static const uint32_t STATUS_OFFSET;  // 0x00000004
-    static const uint32_t IFM_INFO_OFFSET; // 0x00000010
-    static const uint32_t WT_INFO_OFFSET;  // 0x00000014
-    static const uint32_t OFM_INFO_OFFSET; // 0x00000018
+    // SFR pointers
+    SFR* ctrl;
+    SFR* status;
+    SFR* ifm_info;
+    SFR* wt_info;
+    SFR* ofm_info;
 
-    // SFR submodules.
-    SFR *ctrl;
-    SFR *status;
-    SFR *ifm_info;
-    SFR *wt_info;
-    SFR *ofm_info;
+    // SC_METHOD to handle reset
+    void handle_reset();
 
-    // Mapping from offset to SFR pointer.
-    std::unordered_map<uint32_t, SFR*> sfr_map;
+    // Helper function to check if DONE bit is set
+    void check_done_bit(const uint32_t &val);
 };
 
 #endif // NPU_H

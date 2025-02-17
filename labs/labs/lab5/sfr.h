@@ -4,12 +4,24 @@
 #include <systemc.h>
 #include <cstdint>
 
-// SFR module definition (for SystemC 2.3.2).
-// Provides basic register operations: write, read, set, get, and reset.
-// Also includes two dummy processes (an SC_METHOD and an SC_THREAD) that print messages.
+/**
+ * SFR module representing a Special Function Register.
+ *
+ * Member variables:
+ *   m_offset, m_value, m_sw_read_mask, m_sw_write_mask,
+ *   m_hw_read_mask, m_hw_write_mask, m_reset_value
+ *
+ * Member functions:
+ *   write, read, set, get, reset
+ *
+ * Additional processes:
+ *   - dummy_method (SC_METHOD)
+ *   - dummy_thread (SC_THREAD)
+ */
 SC_MODULE(SFR) {
 public:
-    // Constructor.
+    SC_HAS_PROCESS(SFR);
+
     SFR(sc_module_name name,
         uint32_t offset,
         uint32_t sw_read_mask,
@@ -17,29 +29,27 @@ public:
         uint32_t hw_read_mask,
         uint32_t hw_write_mask,
         uint32_t reset_value);
-    // Destructor.
+
     ~SFR();
 
-    // Basic register operations.
-    void write(const uint32_t &input_value);
-    void read(uint32_t &output_value) const;
-    void set(const uint32_t &input_value);
-    void get(uint32_t &output_value) const;
-    // Reset the register to its reset value.
+    void write(const uint32_t &input_value);  // external (SW) write
+    void read(uint32_t &output_value) const;  // external (SW) read
+    void set(const uint32_t &input_value);    // internal (HW) write
+    void get(uint32_t &output_value) const;   // internal (HW) read
     void reset();
 
-    // Dummy processes.
-    void dummy_method();   // An SC_METHOD process that prints module name and time.
-    void dummy_thread();   // An SC_THREAD process that prints its name and time.
+    // Additional SC processes
+    void dummy_method();
+    void dummy_thread();
 
 private:
-    uint32_t m_offset;           // SFR Offset.
-    uint32_t m_value;            // Current value.
-    uint32_t m_sw_read_mask;     // Software read mask.
-    uint32_t m_sw_write_mask;    // Software write mask.
-    uint32_t m_hw_read_mask;     // Hardware read mask.
-    uint32_t m_hw_write_mask;    // Hardware write mask.
-    uint32_t m_reset_value;      // Reset value.
+    uint32_t m_offset;
+    uint32_t m_value;
+    uint32_t m_sw_read_mask;
+    uint32_t m_sw_write_mask;
+    uint32_t m_hw_read_mask;
+    uint32_t m_hw_write_mask;
+    uint32_t m_reset_value;
 };
 
 #endif // SFR_H

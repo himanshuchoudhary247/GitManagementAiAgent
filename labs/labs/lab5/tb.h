@@ -4,38 +4,43 @@
 #include <systemc.h>
 #include "npu.h"
 
-// Testbench (tb) module definition for Lab 5 (SystemC 2.3.2).
-// Instantiates the NPU and drives/monitors reset and interrupt ports,
-// and includes an interrupt handling method that updates counters.
+/**
+ * Lab 5 testbench:
+ * - Has o_reset => drives reset to NPU
+ * - Has i_interrupt => reads interrupt from NPU
+ * - In handle_interrupt_method => increment counters for DONE or ERROR
+ * - Wait on interrupt event => check counters => success/failure
+ * - Clear interrupt => write to int_clear => read status => confirm bits cleared
+ */
 SC_MODULE(tb) {
 public:
+    SC_HAS_PROCESS(tb);
+
     tb(sc_module_name name);
     ~tb();
 
-    // Processes.
-    void basic_test();              // SC_THREAD for the basic test.
-    void handle_reset();            // SC_METHOD to handle changes on the reset port.
-    void handle_interrupt_method(); // SC_METHOD to handle changes on the interrupt port.
+    // Ports
+    sc_out<bool> o_reset;      // reset to NPU
+    sc_in<int>   i_interrupt;  // read NPU interrupt
 
+    // Methods
+    void basic_test();
+    void handle_interrupt_method();
     void end_of_elaboration();
 
-    // External ports.
-    sc_out<bool> o_reset;     // Output port to drive reset to NPU.
-    sc_in<int>   i_interrupt; // Input port to receive interrupt from NPU.
-
-    // Event to signal that an interrupt has been received.
-    sc_event m_interrupt_event;
-
-    // Interrupt counters.
+    // For tracking interrupt counts
     int m_done_count;
     int m_error_count;
 
-private:
-    NPU *npu_inst;
+    // An event to signal that an interrupt arrived
+    sc_event m_interrupt_event;
 
-    // Internal signals for port binding.
-    sc_signal<bool> reset_internal;
-    sc_signal<int>  intr_internal;
+private:
+    NPU* npu_inst;
+
+    // Internal signals
+    sc_signal<bool> reset_sig;
+    sc_signal<int>  intr_sig;
 };
 
 #endif // TB_H

@@ -1,38 +1,45 @@
 #include "npu.h"
 #include <iostream>
 
-// Define static interrupt constants.
+// Offsets
+static const uint32_t CTRL_OFFSET     = 0x00000000;
+static const uint32_t STATUS_OFFSET   = 0x00000004;
+static const uint32_t IFM_INFO_OFFSET = 0x00000010;
+static const uint32_t WT_INFO_OFFSET  = 0x00000014;
+static const uint32_t OFM_INFO_OFFSET = 0x00000018;
+
+
+// Define interrupt states
 const int NPU::INT_IDLE  = 0;
 const int NPU::INT_DONE  = 1;
 const int NPU::INT_ERROR = 2;
 
-// Define static offset constants.
-const uint32_t NPU::CTRL_OFFSET    = 0x00000000;
-const uint32_t NPU::STATUS_OFFSET  = 0x00000004;
-const uint32_t NPU::IFM_INFO_OFFSET = 0x00000010;
-const uint32_t NPU::WT_INFO_OFFSET  = 0x00000014;
-const uint32_t NPU::OFM_INFO_OFFSET = 0x00000018;
-
-NPU::NPU(sc_core::sc_module_name name)
+NPU::NPU(sc_module_name name)
     : sc_module(name)
 {
-    // Instantiate SFR modules.
-    ctrl = new SFR("ctrl", CTRL_OFFSET, 0xFFFFFFFE, 0x00000001, 0xFFFFFFFF, 0x00000000, 0x0);
-    status = new SFR("status", STATUS_OFFSET, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x00000003, 0x0);
-    ifm_info = new SFR("ifm_info", IFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
-    wt_info = new SFR("wt_info", WT_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
-    ofm_info = new SFR("ofm_info", OFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF, 0xFFFFFFFF, 0x00000000, 0x0);
+    ctrl = new SFR("ctrl",
+                   CTRL_OFFSET,  0xFFFFFFFE, 0x00000001,
+                   0xFFFFFFFF,   0x00000000, 0x0);
+    status = new SFR("status",
+                     STATUS_OFFSET, 0xFFFFFFFF, 0x00000000,
+                     0xFFFFFFFF,   0x00000003, 0x0);
+    ifm_info = new SFR("ifm_info",
+                       IFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF0,
+                       0xFFFFFFFF,      0x00000000, 0x0);
+    wt_info  = new SFR("wt_info",
+                       WT_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF0,
+                       0xFFFFFFFF,     0x00000000, 0x0);
+    ofm_info = new SFR("ofm_info",
+                       OFM_INFO_OFFSET, 0xFFFFFFFF, 0x0FFF0FFF0,
+                       0xFFFFFFFF,     0x00000000, 0x0);
 
-    // Build the mapping from offsets to SFR pointers.
-    sfr_map[CTRL_OFFSET]   = ctrl;
-    sfr_map[STATUS_OFFSET] = status;
-    sfr_map[IFM_INFO_OFFSET] = ifm_info;
-    sfr_map[WT_INFO_OFFSET]  = wt_info;
-    sfr_map[OFM_INFO_OFFSET] = ofm_info;
-
-    // Register an SC_METHOD to handle reset.
     SC_METHOD(handle_reset);
     sensitive << i_reset.pos();
+    dont_initialize();
+
+    // Initialize o_interrupt to INT_IDLE in the constructor
+    // but we also ensure stable value in end_of_elaboration
+    o_interrupt.initialize(INT_IDLE);
 }
 
 NPU::~NPU() {
@@ -43,72 +50,89 @@ NPU::~NPU() {
     delete ofm_info;
 }
 
-void NPU::write(uint32_t offset, const uint32_t &value) {
-    auto it = sfr_map.find(offset);
-    if (it != sfr_map.end()) {
-        it->second->write(value);
-        // If writing to CTRL and the start bit is set, trigger operation.
-        if (offset == CTRL_OFFSET) {
-            uint32_t ctrl_val = 0;
-            it->second->read(ctrl_val);
-            if (ctrl_val & 0x1) {
-                start_operation();
-            }
-        }
-    }
-}
-
-void NPU::read(uint32_t offset, uint32_t &value) const {
-    auto it = sfr_map.find(offset);
-    if (it != sfr_map.end()) {
-        it->second->read(value);
-    } else {
-        value = 0;
-    }
-}
-
-void NPU::configure_ifm(uint32_t width, uint32_t height) {
-    uint32_t config_value = (height << 16) | (width & 0xFFFF);
-    ifm_info->write(config_value);
-}
-
-void NPU::configure_ofm(uint32_t width, uint32_t height) {
-    uint32_t config_value = (height << 16) | (width & 0xFFFF);
-    ofm_info->write(config_value);
-}
-
-void NPU::configure_weight(uint32_t width, uint32_t height) {
-    uint32_t config_value = (height << 16) | (width & 0xFFFF);
-    wt_info->write(config_value);
+void NPU::end_of_elaboration() {
+    // Drive interrupt port with stable value (active low => IDLE=0)
+    o_interrupt.write(INT_IDLE);
+    std::cout << "[" << name() << "] end_of_elaboration: o_interrupt=INT_IDLE at " 
+              << sc_time_stamp() << std::endl;
 }
 
 void NPU::handle_reset() {
-    if (i_reset.read() == true) {
-        std::cout << "[" << name() << "] handle_reset: Reset detected at time " 
-                  << sc_time_stamp() << ". Resetting all SFRs." << std::endl;
-        for (auto &entry : sfr_map) {
-            entry.second->reset();
-        }
-        // After reset, drive the interrupt port with IDLE.
+    // On posedge reset => reset internal state
+    if (i_reset.read()) {
+        std::cout << "[" << name() << "] handle_reset: i_reset=1 at " << sc_time_stamp() << std::endl;
+        // Reset each SFR
+        ctrl->reset();
+        status->reset();
+        ifm_info->reset();
+        wt_info->reset();
+        ofm_info->reset();
+        // Deassert interrupt
         o_interrupt.write(INT_IDLE);
     }
 }
 
-void NPU::end_of_elaboration() {
-    // Drive the interrupt port with a stable value (IDLE, which is active low).
-    o_interrupt.write(INT_IDLE);
-    std::cout << "[" << name() << "] end_of_elaboration: o_interrupt set to INT_IDLE (" 
-              << INT_IDLE << ") at time " << sc_time_stamp() << std::endl;
+void NPU::check_done_bit(const uint32_t &val) {
+    // If DONE bit is set in 'val', set interrupt => INT_DONE
+    if (val & 0x1) {
+        o_interrupt.write(INT_DONE);
+        std::cout << "[" << name() << "] check_done_bit: status=0x"
+                  << std::hex << val << std::dec 
+                  << " => interrupt = INT_DONE at " << sc_time_stamp() << std::endl;
+    }
+    // If ERROR bit is set in 'val', we could do => INT_ERROR, but not specified
 }
 
-void NPU::start_operation() {
-    // Simulate NPU operation: set done bit in status SFR.
-    uint32_t status_val = 0;
-    status->get(status_val);
-    status_val |= 0x1; // Set done bit.
-    status->set(status_val);
-    std::cout << "[" << name() << "] start_operation: Operation done at time " 
-              << sc_time_stamp() << std::endl;
-    // Assert the interrupt port with DONE.
-    o_interrupt.write(INT_DONE);
+void NPU::write(uint32_t offset, const uint32_t &value) {
+    switch (offset) {
+        case CTRL_OFFSET:
+            ctrl->write(value);
+            break;
+        case STATUS_OFFSET: {
+            status->write(value);
+            // After writing to status, check if done bit is set
+            uint32_t valAfter;
+            status->read(valAfter);
+            check_done_bit(valAfter);
+            break;
+        }
+        case IFM_INFO_OFFSET:
+            ifm_info->write(value);
+            break;
+        case WT_INFO_OFFSET:
+            wt_info->write(value);
+            break;
+        case OFM_INFO_OFFSET:
+            ofm_info->write(value);
+            break;
+        default:
+            std::cout << "[" << name() << "] write: Unknown offset 0x" 
+                      << std::hex << offset << std::dec << std::endl;
+            break;
+    }
+}
+
+void NPU::read(uint32_t offset, uint32_t &value) const {
+    switch (offset) {
+        case CTRL_OFFSET:
+            ctrl->read(value);
+            break;
+        case STATUS_OFFSET:
+            status->read(value);
+            break;
+        case IFM_INFO_OFFSET:
+            ifm_info->read(value);
+            break;
+        case WT_INFO_OFFSET:
+            wt_info->read(value);
+            break;
+        case OFM_INFO_OFFSET:
+            ofm_info->read(value);
+            break;
+        default:
+            value = 0;
+            std::cout << "[" << name() << "] read: Unknown offset=0x"
+                      << std::hex << offset << std::dec << std::endl;
+            break;
+    }
 }
