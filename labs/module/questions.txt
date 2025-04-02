@@ -1,0 +1,33 @@
+Given that we have decoded the opcode how are we going to decide the operation to perform. 
+    After deciding whee to go:
+        Will we have different virtual stages for each operation.
+        Or different methods.
+
+    
+
+Summary
+In this final code base, we have:
+
+Multi-Cycle logic for each add operation (both FP32 and BF16).
+
+Sub-FSM states: IDLE → ALIGN → ADD → NORMALIZE → ROUND → PACK → DONE.
+
+Each step uses wait() so it occupies exactly one clock cycle, simulating real hardware pipeline behavior.
+
+Alignment (shifting the smaller exponent’s mantissa).
+
+Normalization (checking for overflow, incrementing exponent, shifting mantissa).
+
+Rounding (naive round half up).
+
+Subnormal Handling (if exponent=0 but mantissa≠0, we clamp exponent=1 in a basic way).
+
+No Switch statements for operation decode—we use if/else for the pipeline’s states. The submodules also use an if/else FSM.
+
+Extending:
+
+You can replicate this pattern for sub, reduce-sum, reduce-max in separate submodules (e.g., fp32_sub_unit, bf16_sub_unit, etc.), or incorporate them in the same multi-op submodule with an internal decode.
+
+For vector usage, you might call the submodule repeatedly for each element in the 64-element array. Or build a bigger submodule that processes multiple elements in parallel.
+
+This demonstrates a hardware-accurate approach to FP32/BF16 with multi-cycle alignment, normalization, rounding, and subnormal handling—fully integrated into the MALU pipeline.
