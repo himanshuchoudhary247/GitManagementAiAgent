@@ -1,9 +1,48 @@
+Shall we assume that there will always be 2048 bits of data comming from mrf's. and all operands will we same ??
+Or we will recive the a sequence of opcodes and sequence of operands from mrf's and then we will implement.
+
+
+Do infinity checks in add, subtract and all other ops.
+Think about normal and subnormal numbers.
+
 Given that we have decoded the opcode how are we going to decide the operation to perform. 
     After deciding whee to go:
         Will we have different virtual stages for each operation.
         Or different methods.
 
     
+Edge Case Handling in FP32 and BF16 Ops:
+
+Added comprehensive NaN/Infinity checks (using enable_except).
+
+For subnormal numbers, if enable_subnorm is true, we normalize the mantissa by shifting and adjusting the exponent.
+
+Rounding is performed based on enable_trunc (truncation if true, round half-up otherwise).
+
+Clamping is applied if enable_clamp is true.
+
+2’s Complement in Subtraction:
+
+In fp32_sub_1c and bf16_sub_1c, the code compares magnitudes, uses 2’s complement arithmetic if needed, and assigns the correct sign for the result.
+
+Multiplication:
+
+The multiplication functions multiply the effective mantissas (with an implicit leading 1) and adjust the exponent by summing and subtracting the bias. They check for overflow and apply rounding/clamping as needed.
+
+Type-Cast Operations:
+
+Implemented in typecast_ops.cpp – they now check the new register flags to decide on normalization, truncation, clamping, and exception handling during type conversion.
+
+Register Mapping:
+
+In the reg_map_monitor_method within malu_funccore.cpp, bits from i_reg_map are used to set use_fp32, enable_except, enable_clamp, enable_trunc, and enable_subnorm. The CSV file (HR_Table) provided these definitions.
+
+Parallel, Single-Cycle Implementation:
+
+The pipeline_thread in malu_funccore.cpp processes all 64 lanes in one clock cycle using loops – emulating a wide, parallel circuit.
+
+This completes the robust implementation of the operations file that handles all requested edge cases.
+
 
 Summary
 In this final code base, we have:

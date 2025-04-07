@@ -4,8 +4,10 @@
 #include <systemc.h>
 #include "malu_funccore.hpp"
 
+/**
+ * Top-level MALU module wraps the functional core.
+ */
 struct malu : sc_core::sc_module {
-    // Ports
     sc_in<bool>            clk;
     sc_in<bool>            reset;
     sc_in< sc_uint<32> >   i_npuc2malu;
@@ -20,7 +22,6 @@ struct malu : sc_core::sc_module {
 
     SC_HAS_PROCESS(malu);
     malu(sc_core::sc_module_name name, int set_id);
-
     void set_id(int new_id);
     static void instantiate_MALU();
 };
