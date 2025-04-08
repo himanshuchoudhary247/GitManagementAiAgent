@@ -1,29 +1,29 @@
-#ifndef MALU_HPP
-#define MALU_HPP
-
-#include <systemc.h>
+/**********
+ * Author: Abcd at abcd
+ * Project: Project name
+ * File: malu.hpp
+ * Description: The top-level MALU module wrapping the functional core.
+ **********/
+#pragma once
+#include "npucommon.hpp"
+#include "npudefine.hpp"
 #include "malu_funccore.hpp"
 
-/**
- * Top-level MALU module wraps the functional core.
- */
-struct malu : sc_core::sc_module {
-    sc_in<bool>            clk;
-    sc_in<bool>            reset;
-    sc_in< sc_uint<32> >   i_npuc2malu;
-    sc_out< sc_uint<32> >  o_malu2npuc;
-    sc_in< sc_bv<2048> >   i_mrf2malu[2];
-    sc_out< sc_bv<2048> >  o_malu2mrf;
-    sc_in< sc_uint<32> >   i_reg_map;
-    sc_in< sc_bv<512> >    i_tcm2malu[4];
+class malu: public sc_core::sc_module {
+public:
+    SC_HAS_PROCESS(malu);
+    malu(sc_core::sc_module_name name, int id);
 
+    sc_in<bool> reset;
+    sc_fifo_in<npuc2malu_PTR>  i_npuc2malu;
+    sc_fifo_out<malu2npuc_PTR> o_malu2npuc;
+    sc_vector< sc_fifo_in<mrf2malu_PTR> > i_mrf2malu;
+    sc_fifo_out<malu2mrf_PTR>  o_malu2mrf;
+    sc_fifo_in<sfr_PTR>        i_reg_map;
+
+    void set_id(int set_id);
+
+private:
     malu_funccore funccore;
     int id;
-
-    SC_HAS_PROCESS(malu);
-    malu(sc_core::sc_module_name name, int set_id);
-    void set_id(int new_id);
-    static void instantiate_MALU();
 };
-
-#endif

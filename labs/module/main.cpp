@@ -1,78 +1,107 @@
+/**********
+ * Author: Abcd at abcd
+ * Project: Project name
+ * File: main.cpp
+ * Description: Example SystemC testbench for the MALU design, demonstrating
+ *              pushing an SFR config, an NPU instruction, and MRF data,
+ *              then retrieving the MALU output.
+ **********/
 #include <systemc.h>
 #include "malu.hpp"
+#include "npu2malu.hpp"
+#include "malu2npuc.hpp"
+#include "mrf2malu.hpp"
+#include "malu2mrf.hpp"
 
+/**
+ * This main testbench:
+ * 1) Creates FIFOs
+ * 2) Instantiates the 'malu' module
+ * 3) Sends an SFR command to set OPERATION=0 => add, input_format=0 => FP32
+ * 4) Sends an npuc2malu command with start=1
+ * 5) Sends two lines of MRF data (64-lane, each lane has FP32(1.0) or FP32(2.0))
+ * 6) After the pipeline runs, we read results from o_malu2mrf
+ */
 int sc_main(int argc, char* argv[])
 {
-    sc_signal<bool>          rst("rst");
-    sc_clock                 clk_sig("clk_sig", 10, SC_NS);
-    sc_signal< sc_uint<32> > npuc2malu_sig("npuc2malu_sig");
-    sc_signal< sc_uint<32> > malu2npuc_sig("malu2npuc_sig");
-    sc_signal< sc_bv<2048> > mrf2malu_sig[2];
-    sc_signal< sc_bv<2048> > malu2mrf_sig("malu2mrf_sig");
-    sc_signal< sc_uint<32> > reg_map_sig("reg_map_sig");
-    sc_signal< sc_bv<512> >  tcm2malu_sig[4];
+    // local reset
+    sc_signal<bool> rst("rst");
 
+    // Create FIFOs
+    sc_fifo<npuc2malu_PTR>  npuc2malu_fifo("npuc2malu_fifo", 10);
+    sc_fifo<malu2npuc_PTR>  malu2npuc_fifo("malu2npuc_fifo", 10);
+    sc_vector< sc_fifo<mrf2malu_PTR> > mrf2malu_fifo("mrf2malu_fifo", 2);
+    sc_fifo<malu2mrf_PTR>   malu2mrf_fifo("malu2mrf_fifo", 10);
+    sc_fifo<sfr_PTR>        sfr_fifo("sfr_fifo", 10);
+
+    // Instantiate top MALU
     malu top("top_malu", 0);
-    top.clk(clk_sig);
     top.reset(rst);
-    top.i_npuc2malu(npuc2malu_sig);
-    top.o_malu2npuc(malu2npuc_sig);
-    for (int i = 0; i < 2; i++) {
-        top.i_mrf2malu[i](mrf2malu_sig[i]);
-    }
-    top.o_malu2mrf(malu2mrf_sig);
-    top.i_reg_map(reg_map_sig);
-    for (int j = 0; j < 4; j++) {
-        top.i_tcm2malu[j](tcm2malu_sig[j]);
-    }
+    top.i_npuc2malu(npuc2malu_fifo);
+    top.o_malu2npuc(malu2npuc_fifo);
 
+    for(int i=0; i<2; i++){
+        top.i_mrf2malu[i]( mrf2malu_fifo[i] );
+    }
+    top.o_malu2mrf(malu2mrf_fifo);
+    top.i_reg_map(sfr_fifo);
+
+    // Start simulation
     rst.write(true);
-    // Set register map bits:
-    // Bit0=use_fp32=1, Bit1=enable_except=1, Bit2=enable_clamp=1,
-    // Bit3=enable_trunc=0 (thus round half up), Bit4=enable_subnorm=1.
-    reg_map_sig.write(0x0000001B); // binary 0001 1011 -> bit0=1, bit1=1, bit2=0, bit3=1, bit4=1; adjust as needed.
-    npuc2malu_sig.write(0xFFFFFFFF);
-    for (int i = 0; i < 2; i++) {
-        mrf2malu_sig[i].write(sc_bv<2048>(0));
-    }
-    for (int j = 0; j < 4; j++) {
-        tcm2malu_sig[j].write(sc_bv<512>(0));
-    }
-
-    sc_start(50, SC_NS);
+    sc_start(50,SC_NS);
     rst.write(false);
 
-    // Issue an FP32 ADD operation (opcode 0x00)
+    // 1) Send an SFR entry: address=0xA0 => operation=0 => add, input_format=0 => FP32, etc.
     {
-        sc_uint<32> cmd = 0;
-        cmd.range(7,0) = 0x00; // OP_ADD
-        // Set typecast fields if needed; here not used.
-        npuc2malu_sig.write(cmd);
-
-        sc_bv<2048> lineA = 0, lineB = 0;
-        for (int lane = 0; lane < 64; lane++){
-            // Using FP32 values: 0x3F800000 = 1.0, 0x40000000 = 2.0.
-            sc_uint<32> fpA = 0x3F800000;
-            sc_uint<32> fpB = 0x40000000;
-            for (int b = 0; b < 32; b++){
-                lineA[lane*32 + b] = fpA[b];
-                lineB[lane*32 + b] = fpB[b];
-            }
-        }
-        mrf2malu_sig[0].write(lineA);
-        mrf2malu_sig[1].write(lineB);
+        auto sfr_data = std::make_shared<sfr>();
+        sfr_data->addr = 0xA0;
+        // Let's define bits: operation=0 => add, input_format=0 => FP32, output_format=0 => FP32
+        sfr_data->data = 0x00000000; 
+        sfr_fifo.write(sfr_data);
     }
 
-    sc_start(100, SC_NS);
+    // 2) Push an instruction to npuc2malu => start=1
+    {
+        auto cmd = std::make_shared<npuc2malu>();
+        cmd->start=1;  // indicates do operation=0 => add
+        npuc2malu_fifo.write(cmd);
+    }
 
-    // Print results for each lane.
-    sc_bv<2048> outData = malu2mrf_sig.read();
-    for (int lane = 0; lane < 64; lane++){
-        sc_uint<32> res = 0;
-        for (int b = 0; b < 32; b++){
-            res[b] = outData[lane*32 + b];
+    // 3) Provide MRF data for 2 lines, each 64 lanes with FP32 values (1.0, 2.0)
+    {
+        auto mrfA = std::make_shared<mrf2malu>();
+        auto mrfB = std::make_shared<mrf2malu>();
+        sc_bv<2048> lineA=0, lineB=0;
+        for(int lane=0; lane<64; lane++){
+            sc_uint<32> valA=0x3F800000; // 1.0f in hex
+            sc_uint<32> valB=0x40000000; // 2.0f in hex
+            for(int bit=0; bit<32; bit++){
+                lineA[lane*32 + bit] = valA[bit];
+                lineB[lane*32 + bit] = valB[bit];
+            }
         }
-        std::cout << "Lane " << lane << " result: 0x" << std::hex << res.to_uint() << std::endl;
+        mrfA->data= lineA;
+        mrfA->done=1;
+        mrfB->data= lineB;
+        mrfB->done=1;
+        mrf2malu_fifo[0].write(mrfA);
+        mrf2malu_fifo[1].write(mrfB);
+    }
+
+    // 4) let the pipeline run
+    sc_start(200, SC_NS);
+
+    // 5) read output from malu2mrf
+    while(malu2mrf_fifo.num_available()>0) {
+        auto outptr = malu2mrf_fifo.read();
+        sc_bv<2048> outData = outptr->data;
+        for(int lane=0; lane<64; lane++){
+            sc_uint<32> result=0;
+            for(int bit=0; bit<32; bit++){
+                result[bit]= outData[lane*32 + bit];
+            }
+            std::cout<<"Lane "<<lane<<" => 0x"<< std::hex << result.to_uint()<< std::dec <<std::endl;
+        }
     }
 
     sc_stop();

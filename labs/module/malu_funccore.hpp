@@ -1,56 +1,85 @@
-#ifndef MALU_FUNCCORE_HPP
-#define MALU_FUNCCORE_HPP
-
+/**********
+ * Author: Abcd at abcd
+ * Project: Project name
+ * File: malu_funccore.hpp
+ * Description: Declares the MALU functional core. It has three threads:
+ *              1) pipeline_thread (executes the math ops),
+ *              2) sfr_decoder (reads i_reg_map FIFO and decodes SFRs),
+ *              3) lut_load_thread (dummy thread for future LUT usage).
+ **********/
+#pragma once
 #include <systemc.h>
+#include "npucommon.hpp"
+#include "npudefine.hpp"
+#include "npu2malu.hpp"
+#include "malu2npuc.hpp"
+#include "mrf2malu.hpp"
+#include "malu2mrf.hpp"
 #include "ops.hpp"
 #include "typecast_ops.hpp"
 
 /**
- * MALU functional core:
- * - Implements single-cycle vector operations (64 lanes)
- * - Supports FP32 and BF16 operations, as well as type-casting.
- * - Uses register bits from i_reg_map to control:
- *     use_fp32, enable_except, enable_clamp, enable_trunc, enable_subnorm.
+ * SFR decode struct: holds config from addresses like 0x64, 0x68, 0x6A, 0x80, 0xA0
  */
-static const int VECTOR_LEN = 64;
+struct decoded_sfr_t {
+    // Fields from 0x64
+    sc_uint<1>  store_output;
+    sc_uint<4>  reg_index_output;
+    sc_uint<1>  load_input_1;
+    sc_uint<4>  reg_index_input_1;
+    sc_uint<1>  load_input_0;
+    sc_uint<4>  reg_index_input_0;
+    sc_uint<1>  load_lut_enable;
+    sc_uint<6>  lut_size;
+    sc_uint<15> lut_base_addr;
 
-enum PipeState { ST_IDLE, ST_EX };
+    // Fields from 0x68
+    sc_uint<8>  scalar_index_output;
+    sc_uint<8>  scalar_index_input_1;
 
-struct malu_funccore : sc_core::sc_module {
-    sc_in<bool>            clk;
-    sc_in<bool>            reset;
-    sc_in< sc_uint<32> >   i_npuc2malu;
-    sc_out< sc_uint<32> >  o_malu2npuc;
-    sc_in< sc_bv<2048> >   i_mrf2malu[2];
-    sc_out< sc_bv<2048> >  o_malu2mrf;
-    sc_in< sc_uint<32> >   i_reg_map;
-    sc_in< sc_bv<512> >    i_tcm2malu[4];
+    // Field from 0x6A
+    sc_uint<32> immediate_value;
 
-    int id;
+    // Field from 0x80
+    sc_uint<1>  tensor_fused_op;
+    sc_uint<3>  tensor_num_fmt;
 
-    // Decode signals for operation selection
-    sc_signal<bool> dec_add, dec_sub, dec_mul, dec_typecast;
+    // Fields from 0xA0 (MODE_MATH)
+    sc_uint<4>  operation;       // 0..12 => add, sub, mul, ...
+    sc_uint<3>  input_format;    // 0 => FP32, 1 => BF16, 2 => INT8?
+    sc_uint<3>  output_format;   // 0 => FP32, 1 => BF16, 2 => INT8?
+    sc_uint<2>  operand_type;
+    sc_uint<1>  fused_op;
+    sc_uint<3>  rounding_mode;
+    sc_uint<1>  saturation_enable;
 
-    // Register-controlled flags (from CSV HR_Table):
-    sc_signal<bool> use_fp32;      // 1: FP32, 0: BF16
-    sc_signal<bool> enable_except; // Exception handling enabled
-    sc_signal<bool> enable_clamp;  // Clamp outputs if required
-    sc_signal<bool> enable_trunc;  // 1: truncate; 0: round half-up
-    sc_signal<bool> enable_subnorm;// Normalize subnormals if true
+    void printHumanReadable() const;
+};
 
-    // Type-cast formats
-    sc_signal<NumFormat> srcFmt, dstFmt;
-
-    sc_signal<PipeState> state_reg;
-
+class malu_funccore: public sc_core::sc_module {
+public:
     SC_HAS_PROCESS(malu_funccore);
     malu_funccore(sc_core::sc_module_name name);
 
-    void pipeline_thread();
-    void opcode_decode_method();
-    void reg_map_monitor_method();
-    void lut_load_thread();
-    void set_Id(int set_id);
-};
+    // Ports
+    sc_in<bool> clk;
+    sc_in<bool> reset;
 
-#endif
+    // FIFO ports for instructions, results, MRF data, etc.
+    sc_fifo_in<npuc2malu_PTR>  i_npuc2malu;
+    sc_fifo_out<malu2npuc_PTR> o_malu2npuc;
+    sc_vector< sc_fifo_in<mrf2malu_PTR> > i_mrf2malu;
+    sc_fifo_out<malu2mrf_PTR>  o_malu2mrf;
+    sc_fifo_in<sfr_PTR>        i_reg_map;
+
+    void set_Id(int set_id);
+
+private:
+    int id;
+    decoded_sfr_t sfr_config; // store the SFR config
+
+    // Threads
+    void pipeline_thread();   // does the math ops
+    void sfr_decoder();       // reads i_reg_map and sets sfr_config
+    void lut_load_thread();   // dummy thread for future LUT usage
+};

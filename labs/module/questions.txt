@@ -1,3 +1,6 @@
+Opcode for OPTION_MATH_LOAD_STORE and OPTION_MATH_LUT are same.
+
+
 Shall we assume that there will always be 2048 bits of data comming from mrf's. and all operands will we same ??
 Or we will recive the a sequence of opcodes and sequence of operands from mrf's and then we will implement.
 
