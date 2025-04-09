@@ -127,15 +127,23 @@
  
          std::cout << "\n=== MALU OUTPUT ===" << std::endl;
          for (int lane = 0; lane < 64; ++lane) {
-             sc_uint<32> res = 0;
-             for (int bit = 0; bit < 32; ++bit)
-                 res[bit] = (bool)out[lane * 32 + bit];
-             std::cout << "Lane " << std::setw(2) << lane
-                       << " : 0x" << std::hex << std::setw(8)
-                       << res.to_uint() << std::dec << "  "
-                       << " = " << *(float*)&(res.to_uint()) << "f"
-                       << std::endl;
-         }
+            sc_uint<32> res = 0;
+            for (int bit = 0; bit < 32; ++bit)
+                res[bit] = (bool)out[lane * 32 + bit];
+        
+            union {
+                uint32_t u;
+                float f;
+            } fp32;
+            fp32.u = res.to_uint();
+        
+            std::cout << "Lane " << std::setw(2) << lane
+                      << " : 0x" << std::hex << std::setw(8)
+                      << res.to_uint() << std::dec
+                      << " = " << fp32.f << "f"
+                      << std::endl;
+        }
+        
      } else {
          std::cout << "No result available from MALU output." << std::endl;
      }
