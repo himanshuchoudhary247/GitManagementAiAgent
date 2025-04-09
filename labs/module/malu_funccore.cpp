@@ -1,498 +1,246 @@
 /**********
  * Author: Abcd at abcd
  * Project: Project name
- * File: ops.cpp
- * Description: Implements single‐cycle FP32 and BF16 arithmetic operations 
- *              (addition, subtraction, multiplication). The operations correctly 
- *              restore the implicit 1, align operands, and normalize the result.
- *              FP32 subtraction is implemented by comparing magnitudes and using 
- *              proper 2's complement (rather than simply negating the sign).
- *              Debug prints are emitted when DEBUG_MODE is true.
+ * File: malu_funccore.cpp
+ * Description: Implements the MALU functional core. It has three threads:
+ *              1) pipeline_thread => single-cycle 64-lane math ops
+ *              2) sfr_decoder => reads from i_reg_map (COMMON_REGISTERS) subfields
+ *              3) lut_load_thread => dummy
  **********/
+#include "malu_funccore.hpp"
+#include <iostream>
 
- #include "ops.hpp"
- #include <iostream>
- #include <cstdint>
- 
- //---------------------------------------------------------------------
- // Debug mode flag
- //---------------------------------------------------------------------
- static const bool DEBUG_MODE = true;
- 
- //---------------------------------------------------------------------
- // Global context for FP operations control.
- // These are set via setOpsContext() externally.
- //---------------------------------------------------------------------
- static struct {
-     bool enable_subnorm;  // if true, treat subnormals as normalized (exponent = 1)
-     bool enable_trunc;    // if true, perform truncation instead of round-half-up
-     bool enable_clamp;    // if true, clamp the exponent on overflow
-     bool enable_except;   // if true, handle NaN/Inf explicitly
- } g_ops;
- 
- void setOpsContext(bool subnorm, bool trunc, bool clamp, bool except) {
-     g_ops.enable_subnorm = subnorm;
-     g_ops.enable_trunc   = trunc;
-     g_ops.enable_clamp   = clamp;
-     g_ops.enable_except  = except;
- }
- 
- // ---------------------- FP32 HELPER FUNCTIONS ----------------------
- 
- // Decode a 32-bit floating-point value into sign (1 bit), exponent (8 bits),
- // and mantissa (23 bits).
- static void decode_fp32(sc_uint<32> val, sc_uint<1>& s, sc_uint<8>& e, sc_uint<23>& m)
- {
-     s = val[31];
-     e = val.range(30, 23);
-     m = val.range(22, 0);
- }
- 
- // Encode sign, exponent, and mantissa into a 32-bit floating-point value.
- static sc_uint<32> encode_fp32(sc_uint<1> s, sc_uint<8> e, sc_uint<23> m)
- {
-     sc_uint<32> out = 0;
-     out[31] = s;
-     out.range(30,23) = e;
-     out.range(22,0) = m;
-     return out;
- }
- 
- static bool is_fp32_inf(sc_uint<8> e, sc_uint<23> m) {
-     return (e == 255 && m == 0);
- }
- static bool is_fp32_nan(sc_uint<8> e, sc_uint<23> m) {
-     return (e == 255 && m != 0);
- }
- static bool is_fp32_subnormal(sc_uint<8> e, sc_uint<23> m) {
-     return (e == 0 && m != 0);
- }
- 
- // Clamp exponent if above maximum; set mantissa to maximum.
- static void clamp_exponent_fp32(sc_uint<8>& e, sc_uint<23>& m)
- {
-     if(e > 254) {
-         e = 254;
-         m = (1 << 23) - 1;
-     }
- }
- 
- // Finalize rounding for FP32 addition/subtraction using a 25-bit accumulator.
- // Accepts sum (25 bits) and returns 23-bit mantissa.
- // (If enable_trunc is true, simply drop LSB; otherwise, round half-up.)
- static sc_uint<23> finalize_round_fp32(sc_uint<25> sum)
- {
-     if(g_ops.enable_trunc) {
-         sum >>= 1;
-     } else {
-         bool roundBit = sum[0].to_bool();
-         sum >>= 1;
-         if(roundBit)
-             sum += 1;
-     }
-     return sum.range(22,0);
- }
- 
- // ---------------------- FP32 ADD ----------------------
- /*
-  * FP32 addition:
-  * - Decode both operands.
-  * - Restore implicit 1 in each operand to obtain a 24-bit significand.
-  * - Align the smaller significand by right-shifting by the difference in exponents.
-  * - Use a 25-bit accumulator to add the significands.
-  * - If there's a carry-out (bit 24 set), shift right and increment the exponent.
-  * - Round the 25-bit sum to 23 bits.
-  * - Clamp the exponent if needed.
-  * - Encode and return the result.
-  */
- sc_uint<32> fp32_add_1c(sc_uint<32> a, sc_uint<32> b)
- {
-     sc_uint<1> sA, sB;
-     sc_uint<8> eA, eB;
-     sc_uint<23> mA, mB;
-     decode_fp32(a, sA, eA, mA);
-     decode_fp32(b, sB, eB, mB);
- 
-     // Exception processing.
-     if(g_ops.enable_except) {
-         if(is_fp32_nan(eA, mA) || is_fp32_nan(eB, mB))
-             return encode_fp32(0, 255, 1);
-         if(is_fp32_inf(eA, mA)) return a;
-         if(is_fp32_inf(eB, mB)) return b;
-     }
- 
-     // Handle subnormals by forcing exponent to 1, if enabled.
-     if(g_ops.enable_subnorm) {
-         if(is_fp32_subnormal(eA, mA)) eA = 1;
-         if(is_fp32_subnormal(eB, mB)) eB = 1;
-     }
- 
-     // If signs differ, defer to subtraction.
-     if(sA != sB)
-         return fp32_sub_1c(a, b);
- 
-     sc_uint<8> eMax = (eA > eB) ? eA : eB;
-     sc_uint<8> eMin = (eA > eB) ? eB : eA;
- 
-     // Restore the implicit 1 for normalized numbers; get 24-bit significands.
-     sc_uint<24> bigM = (1 << 23) | ((eA > eB) ? mA : mB);
-     sc_uint<24> smlM = (1 << 23) | ((eA > eB) ? mB : mA);
- 
-     // Align the smaller significand.
-     sc_uint<8> diff = eMax - eMin;
-     sc_uint<24> alignedSml = smlM >> diff;
- 
-     // Accumulate using a 25-bit variable.
-     sc_uint<25> sumVal = (sc_uint<25>)bigM + (sc_uint<25>)alignedSml;
- 
-     // Normalize if carry-out occurs.
-     if(sumVal[24]) {
-         sumVal >>= 1;
-         eMax++;
-     }
- 
-     sc_uint<23> finalMant = finalize_round_fp32(sumVal);
-     if(g_ops.enable_clamp)
-         clamp_exponent_fp32(eMax, finalMant);
- 
-     sc_uint<32> result = encode_fp32(sA, eMax, finalMant);
-     if(DEBUG_MODE) {
-         std::cout << "[FP32 ADD] a=0x" << std::hex << a 
-                   << ", b=0x" << b 
-                   << ", result=0x" << result << std::dec << std::endl;
-     }
-     return result;
- }
- 
- // ---------------------- FP32 SUB ----------------------
- /*
-  * FP32 subtraction:
-  * - Decode both operands.
-  * - If the signs differ, then subtraction becomes addition (handled by fp32_add_1c).
-  * - Otherwise, compare the operands to determine which is larger.
-  * - Align the smaller significand to the larger exponent.
-  * - Subtract the aligned smaller significand from the larger.
-  * - Normalize the result by shifting left until the implicit 1 is restored.
-  * - Round the normalized result.
-  * - Set the result's sign to that of the larger (in magnitude) operand.
-  * - Encode and return the result.
-  */
- sc_uint<32> fp32_sub_1c(sc_uint<32> a, sc_uint<32> b)
- {
-     sc_uint<1> sA, sB;
-     sc_uint<8> eA, eB;
-     sc_uint<23> mA, mB;
-     decode_fp32(a, sA, eA, mA);
-     decode_fp32(b, sB, eB, mB);
- 
-     // If signs differ, subtraction becomes addition.
-     if(sA != sB) {
-         sc_uint<32> bNeg = b;
-         bNeg[31] = ~b[31];   // Negate b
-         return fp32_add_1c(a, bNeg);
-     }
- 
-     // Both numbers have the same sign, so perform true subtraction.
-     // Determine the larger operand (by exponent then mantissa).
-     bool aGreater;
-     if(eA > eB)
-         aGreater = true;
-     else if(eA < eB)
-         aGreater = false;
-     else
-         aGreater = (mA >= mB); // Compare mantissas if exponents are equal
- 
-     // The result's sign is the sign of the larger operand.
-     sc_uint<1> resultSign = aGreater ? sA : sB;
- 
-     // Convert mantissas to 24-bit (restore implicit bit).
-     sc_uint<24> manA = (1 << 23) | mA;
-     sc_uint<24> manB = (1 << 23) | mB;
- 
-     // Ensure we subtract the smaller magnitude from the larger.
-     sc_uint<8> expLarger, expSmaller;
-     sc_uint<24> manLarger, manSmaller;
-     if(aGreater) {
-         expLarger = eA;
-         expSmaller = eB;
-         manLarger = manA;
-         manSmaller = manB;
-     } else {
-         expLarger = eB;
-         expSmaller = eA;
-         manLarger = manB;
-         manSmaller = manA;
-     }
- 
-     // Align the smaller significand.
-     sc_uint<8> diff = expLarger - expSmaller;
-     sc_uint<24> alignedSmaller = manSmaller >> diff;
- 
-     // Subtract the aligned smaller mantissa from the larger.
-     int diffMant = (int)manLarger - (int)alignedSmaller;
-     if(diffMant < 0)
-         diffMant = 0; // Guard against underflow
- 
-     sc_uint<24> diffMant_u = diffMant;
- 
-     // Normalize the result: shift left until the implicit 1 appears.
-     sc_uint<8> resultExp = expLarger;
-     while(resultExp > 0 && diffMant_u[23] == 0) {
-         diffMant_u <<= 1;
-         resultExp--;
-     }
- 
-     // Use a 25-bit accumulator to round.
-     sc_uint<25> roundAcc = diffMant_u;
-     sc_uint<23> finalMant = finalize_round_fp32(roundAcc);
-     if(g_ops.enable_clamp)
-         clamp_exponent_fp32(resultExp, finalMant);
-     return encode_fp32(resultSign, resultExp, finalMant);
- }
- 
- // ---------------------- FP32 MUL ----------------------
- sc_uint<32> fp32_mul_1c(sc_uint<32> a, sc_uint<32> b)
- {
-     sc_uint<1> sA, sB;
-     sc_uint<8> eA, eB;
-     sc_uint<23> mA, mB;
-     decode_fp32(a, sA, eA, mA);
-     decode_fp32(b, sB, eB, mB);
-     sc_uint<1> outSign = sA ^ sB;
- 
-     if(g_ops.enable_except) {
-         if(is_fp32_nan(eA, mA) || is_fp32_nan(eB, mB))
-             return encode_fp32(0, 255, 1);
-         if(is_fp32_inf(eA, mA) || is_fp32_inf(eB, mB))
-             return encode_fp32(outSign, 255, 0);
-     }
-     if(g_ops.enable_subnorm) {
-         if(is_fp32_subnormal(eA, mA)) eA = 1;
-         if(is_fp32_subnormal(eB, mB)) eB = 1;
-     }
- 
-     int eSum = (int)eA + (int)eB - 127;
-     if(eSum < 1) eSum = 1;
-     else if(eSum > 254) {
-         if(g_ops.enable_clamp)
-             return encode_fp32(outSign, 254, (1 << 23) - 1);
-         else
-             return encode_fp32(outSign, 255, 0);
-     }
-     sc_uint<24> bigA = (1 << 23) | mA;
-     sc_uint<24> bigB = (1 << 23) | mB;
-     uint64_t prod = (uint64_t)bigA * (uint64_t)bigB;
-     if ((prod >> 47) & 1) {
-         prod >>= 1;
-         eSum++;
-     }
-     sc_uint<24> mid = (prod >> 23) & 0xFFFFFF;
-     sc_uint<23> finalMant = finalize_round_fp32(mid);
-     sc_uint<8> outE = eSum;
-     if(g_ops.enable_clamp && outE > 254) {
-         outE = 254;
-         finalMant = (1 << 23)-1;
-     }
-     return encode_fp32(outSign, outE, finalMant);
- }
- 
- // ---------------------- BF16 HELPER FUNCTIONS ----------------------
- 
- // Decode a BF16 value. BF16 uses 1 sign bit, 8 exponent bits, and the top 7 bits of the fraction.
- static void decode_bf16(sc_uint<32> val, sc_uint<1>& s, sc_uint<8>& e, sc_uint<7>& m)
- {
-     s = val[31];
-     e = val.range(30,23);
-     m = val.range(22,16);
- }
- 
- // Encode a BF16 value.
- static sc_uint<32> encode_bf16(sc_uint<1> s, sc_uint<8> e, sc_uint<7> m)
- {
-     sc_uint<32> out = 0;
-     out[31] = s;
-     out.range(30,23) = e;
-     out.range(22,16) = m;
-     return out;
- }
- 
- static bool is_bf16_inf(sc_uint<8> e, sc_uint<7> m) {
-     return (e == 255 && m == 0);
- }
- static bool is_bf16_nan(sc_uint<8> e, sc_uint<7> m) {
-     return (e == 255 && m != 0);
- }
- static bool is_bf16_subnormal(sc_uint<8> e, sc_uint<7> m) {
-     return (e == 0 && m != 0);
- }
- 
- static void clamp_exponent_bf16(sc_uint<8>& e, sc_uint<7>& m)
- {
-     if(e > 254) {
-         e = 254;
-         m = (1 << 7) - 1;
-     }
- }
- 
- /**
-  * finalize_round_bf16: Given an 8-bit BF16 accumulator (with one extra rounding bit),
-  * perform rounding (truncation or round-half-up) and return a 7-bit result.
-  */
- static sc_uint<7> finalize_round_bf16(sc_uint<8> sum)
- {
-     if(g_ops.enable_trunc) {
-         return sum.range(6,0);
-     } else {
-         bool roundBit = sum[0].to_bool();
-         sum >>= 1;
-         if(roundBit)
-             sum += 1;
-         return sum.range(6,0);
-     }
- }
- 
- // ---------------------- BF16 ADD ----------------------
- sc_uint<32> bf16_add_1c(sc_uint<32> a, sc_uint<32> b)
- {
-     sc_uint<1> sA, sB;
-     sc_uint<8> eA, eB;
-     sc_uint<7> mA, mB;
-     decode_bf16(a, sA, eA, mA);
-     decode_bf16(b, sB, eB, mB);
- 
-     if(g_ops.enable_except) {
-         if(is_bf16_nan(eA, mA) || is_bf16_nan(eB, mB))
-             return encode_bf16(0,255,1);
-         if(is_bf16_inf(eA, mA)) return a;
-         if(is_bf16_inf(eB, mB)) return b;
-     }
- 
-     if(g_ops.enable_subnorm) {
-         if(is_bf16_subnormal(eA, mA)) eA = 1;
-         if(is_bf16_subnormal(eB, mB)) eB = 1;
-     }
-     if(sA != sB)
-         return bf16_sub_1c(a, b);
- 
-     sc_uint<8> eMax = (eA > eB) ? eA : eB;
-     sc_uint<8> diff = (eA > eB) ? (eA - eB) : (eB - eA);
- 
-     // Restore implicit bit: use 8-bit significands for BF16.
-     sc_uint<8> bigM = (1 << 7) | ((eA > eB) ? mA : mA);
-     sc_uint<8> smlM = (1 << 7) | ((eA > eB) ? mB : mB);
- 
-     sc_uint<8> extSml = smlM >> diff;
-     sc_uint<8> sumVal = bigM + extSml;
-     if(sumVal[7] == 1) {
-         sumVal >>= 1;
-         eMax++;
-     }
-     sc_uint<7> finalMant = finalize_round_bf16(sumVal);
-     if(g_ops.enable_clamp)
-         clamp_exponent_bf16(eMax, finalMant);
- 
-     return encode_bf16(sA, eMax, finalMant);
- }
- 
- // ---------------------- BF16 SUB ----------------------
- sc_uint<32> bf16_sub_1c(sc_uint<32> a, sc_uint<32> b)
- {
-     sc_uint<1> sA, sB;
-     sc_uint<8> eA, eB;
-     sc_uint<7> mA, mB;
-     decode_bf16(a, sA, eA, mA);
-     decode_bf16(b, sB, eB, mB);
- 
-     if(g_ops.enable_except) {
-         if(is_bf16_nan(eA, mA) || is_bf16_nan(eB, mB))
-             return encode_bf16(0,255,1);
-         if(is_bf16_inf(eA, mA) && is_bf16_inf(eB, mB))
-             return encode_bf16(0,255,1);
-         if(is_bf16_inf(eA, mA)) return a;
-         if(is_bf16_inf(eB, mB)) return encode_bf16(~sB,255,0);
-     }
-     if(g_ops.enable_subnorm) {
-         if(is_bf16_subnormal(eA, mA)) eA = 1;
-         if(is_bf16_subnormal(eB, mB)) eB = 1;
-     }
-     if(sA != sB) {
-         sc_uint<32> bNeg = b;
-         bNeg[31] = ~sB;
-         return bf16_add_1c(a, bNeg);
-     } else {
-         sc_uint<8> eMax = (eA > eB) ? eA : eB;
-         sc_uint<8> diff = (eA > eB) ? (eA - eB) : (eB - eA);
-         sc_uint<8> bigM = (1 << 7) | ((eA > eB) ? mA : mA);
-         sc_uint<8> smlM = (1 << 7) | ((eA > eB) ? mB : mB);
-         sc_uint<1> outSign = (eA > eB) ? sA : sB;
-         sc_uint<8> ext = smlM >> diff;
- 
-         int dif = (int)bigM - (int)ext;
-         if(dif < 0) {
-             outSign = ~outSign;
-             dif = -dif;
-         }
-         sc_uint<8> mag = (sc_uint<8>)dif;
-         while(mag[7] == 0 && mag != 0 && eMax > 0) {
-             mag <<= 1;
-             eMax--;
-         }
-         sc_uint<7> finalMant = finalize_round_bf16(mag);
-         if(g_ops.enable_clamp)
-             clamp_exponent_bf16(eMax, finalMant);
-         return encode_bf16(outSign, eMax, finalMant);
-     }
- }
- 
- // ---------------------- BF16 MUL ----------------------
- sc_uint<32> bf16_mul_1c(sc_uint<32> a, sc_uint<32> b)
- {
-     sc_uint<1> sA, sB;
-     sc_uint<8> eA, eB;
-     sc_uint<7> mA, mB;
-     decode_bf16(a, sA, eA, mA);
-     decode_bf16(b, sB, eB, mB);
-     sc_uint<1> outSign = sA ^ sB;
- 
-     if(g_ops.enable_except) {
-         if(is_bf16_nan(eA, mA) || is_bf16_nan(eB, mB))
-             return encode_bf16(0,255,1);
-         bool infA = is_bf16_inf(eA, mA);
-         bool infB = is_bf16_inf(eB, mB);
-         if(infA || infB) {
-             if((infA && eB != 0) || (infB && eA != 0))
-                 return encode_bf16(outSign,255,0);
-             else
-                 return encode_bf16(0,255,1);
-         }
-     }
-     if(g_ops.enable_subnorm) {
-         if(is_bf16_subnormal(eA, mA)) eA = 1;
-         if(is_bf16_subnormal(eB, mB)) eB = 1;
-     }
-     int eSum = (int)eA + (int)eB - 127;
-     if(eSum < 1) eSum = 1;
-     else if(eSum > 254) {
-         if(g_ops.enable_clamp)
-             return encode_bf16(outSign,254,(1<<7)-1);
-         else
-             return encode_bf16(outSign,255,0);
-     }
-     sc_uint<8> bigA = (1 << 7) | mA;
-     sc_uint<8> bigB = (1 << 7) | mB;
-     unsigned int prod = (unsigned int)bigA * (unsigned int)bigB;
-     if((prod >> 15) & 1) {
-         prod >>= 1;
-         eSum++;
-     }
-     sc_uint<8> mid = (prod >> 7) & 0xFF;
-     sc_uint<7> finalMant = finalize_round_bf16(mid);
-     sc_uint<8> outE = eSum;
-     if(g_ops.enable_clamp && outE > 254) {
-         outE = 254;
-         finalMant = (1 << 7) - 1;
-     } else if(outE >= 255) {
-         return encode_bf16(outSign,255,0);
-     }
-     return encode_bf16(outSign, outE, finalMant);
- } 
+// Debug printing for decoded SFR
+void decoded_sfr_t::printHumanReadable() const
+{
+    std::cout << "[decoded_sfr_t]\n"
+              << "  store_output=" << store_output << "\n"
+              << "  reg_index_output=" << reg_index_output << "\n"
+              << "  load_input_1=" << load_input_1 << "\n"
+              << "  reg_index_input_1=" << reg_index_input_1 << "\n"
+              << "  load_input_0=" << load_input_0 << "\n"
+              << "  reg_index_input_0=" << reg_index_input_0 << "\n"
+              << "  load_lut_enable=" << load_lut_enable << "\n"
+              << "  lut_size=" << lut_size << "\n"
+              << "  lut_base_addr=" << lut_base_addr << "\n"
+              << "  scalar_index_output=" << scalar_index_output << "\n"
+              << "  scalar_index_input_1=" << scalar_index_input_1 << "\n"
+              << "  immediate_value=0x" << std::hex << immediate_value.to_uint() << std::dec << "\n"
+              << "  operation=" << operation << "\n"
+              << "  input_format=" << input_format << "\n"
+              << "  output_format=" << output_format << "\n"
+              << "  operand_type=" << operand_type << "\n"
+              << "  fused_op=" << fused_op << "\n"
+              << "  rounding_mode=" << rounding_mode << "\n"
+              << "  saturation_enable=" << saturation_enable << std::endl;
+}
+
+// Constructor
+malu_funccore::malu_funccore(sc_core::sc_module_name name)
+  : sc_module(name)
+  , clk("clk")
+  , reset("reset")
+  , i_npuc2malu("i_npuc2malu")
+  , o_malu2npuc("o_malu2npuc")
+  , i_mrf2malu("i_mrf2malu", 2)
+  , o_malu2mrf("o_malu2mrf")
+  , i_reg_map("i_reg_map")
+  , id(-1)
+{
+    SC_CTHREAD(pipeline_thread, clk.pos());
+    reset_signal_is(reset,true);
+
+    SC_CTHREAD(sfr_decoder, clk.pos());
+    reset_signal_is(reset,true);
+
+    SC_CTHREAD(lut_load_thread, clk.pos());
+    reset_signal_is(reset,true);
+}
+
+void malu_funccore::set_Id(int set_id)
+{
+    id= set_id;
+}
+
+// The dummy LUT load thread
+void malu_funccore::lut_load_thread()
+{
+    wait();
+    while(true){
+        // For future LUT usage
+        wait();
+    }
+}
+
+// The SFR decoder
+// We read from i_reg_map => a shared_ptr<_COMMON_REGISTERS> (sfr_PTR).
+// Then we copy relevant subfields into sfr_config.
+void malu_funccore::sfr_decoder()
+{
+    while(true){
+        wait();
+
+        // If there's an SFR struct available, parse it:
+        if(i_reg_map.num_available() > 0) {
+            auto sfr_ptr = i_reg_map.read();
+
+            // We'll do a switch on *addresses* if you wish. 
+            // But user code says each sub-struct in _COMMON_REGISTERS 
+            // is already splitted. So let's do direct copying:
+
+            // 1) For 0x64 => reg_parsed_option_math_load_store
+            sfr_config.store_output      = sfr_ptr->reg_parsed_option_math_load_store.store_output;
+            sfr_config.reg_index_output  = sfr_ptr->reg_parsed_option_math_load_store.reg_index_output;
+            sfr_config.load_input_1      = sfr_ptr->reg_parsed_option_math_load_store.load_input_1;
+            sfr_config.reg_index_input_1 = sfr_ptr->reg_parsed_option_math_load_store.reg_index_input_1;
+            sfr_config.load_input_0      = sfr_ptr->reg_parsed_option_math_load_store.load_input_0;
+            sfr_config.reg_index_input_0 = sfr_ptr->reg_parsed_option_math_load_store.reg_index_input_0;
+
+            // 2) Also from 0x64 => reg_parsed_option_math_lut
+            sfr_config.load_lut_enable   = sfr_ptr->reg_parsed_option_math_lut.load_lut_enable;
+            sfr_config.lut_size          = sfr_ptr->reg_parsed_option_math_lut.lut_size;
+            sfr_config.lut_base_addr     = sfr_ptr->reg_parsed_option_math_lut.lut_base_addr;
+
+            // 3) 0x68 => reg_parsed_option_math_scalar
+            sfr_config.scalar_index_output  = sfr_ptr->reg_parsed_option_math_scalar.scalar_index_output;
+            sfr_config.scalar_index_input_1 = sfr_ptr->reg_parsed_option_math_scalar.scalar_index_input_1;
+
+            // 4) 0x6A => reg_parsed_option_math_immediate
+            sfr_config.immediate_value = sfr_ptr->reg_parsed_option_math_immediate.immediate_value;
+
+            // 5) 0xA0 => reg_parsed_mode_math
+            sfr_config.operation         = sfr_ptr->reg_parsed_mode_math.operation;
+            sfr_config.input_format      = sfr_ptr->reg_parsed_mode_math.input_format;
+            sfr_config.output_format     = sfr_ptr->reg_parsed_mode_math.output_format;
+            sfr_config.operand_type      = sfr_ptr->reg_parsed_mode_math.operand_type;
+            sfr_config.fused_op          = sfr_ptr->reg_parsed_mode_math.fused_op;
+            sfr_config.rounding_mode     = sfr_ptr->reg_parsed_mode_math.rounding_mode;
+            sfr_config.saturation_enable = sfr_ptr->reg_parsed_mode_math.saturation_enable;
+
+#if DEBUG_LOG_SEVERITY>0
+            std::cout << "[SFR Decoder] Copied sub-struct fields into sfr_config.\n";
+            sfr_config.printHumanReadable();
+#endif
+            // Possibly set the global ops context from the mode fields
+            bool excpt   = (sfr_config.operation[0]==1);
+            bool clamp   = (sfr_config.saturation_enable==1);
+            bool trunc   = (sfr_config.rounding_mode[0]==1);
+            bool subnorm = true;
+            setOpsContext(subnorm, trunc, clamp, excpt);
+        }
+    }
+}
+
+// The pipeline thread
+// Reads instructions from i_npuc2malu and two lines from MRF, 
+// uses sfr_config.operation to pick the math op, 
+// does a 64-lane single-cycle pass, writes out results.
+void malu_funccore::pipeline_thread()
+{
+    wait();
+    while(true){
+        if(i_npuc2malu.num_available()>0 &&
+           i_mrf2malu[0].num_available()>0 &&
+           i_mrf2malu[1].num_available()>0)
+        {
+            auto cmd_ptr = i_npuc2malu.read();
+
+            if(cmd_ptr->start==1) {
+                // read MRF lines
+                auto inA_ptr= i_mrf2malu[0].read();
+                auto inB_ptr= i_mrf2malu[1].read();
+
+                sc_bv<2048> outBits=0;
+                sc_bv<2048> aBits = inA_ptr->data;
+                sc_bv<2048> bBits = inB_ptr->data;
+
+                // interpret input_format => 0=FP32, 1=BF16, 2=INT8?
+                bool use_fp32= (sfr_config.input_format==0);
+                bool use_bf16= (sfr_config.input_format==1);
+
+                for(int lane=0; lane<64; lane++){
+                    sc_uint<32> valA=0, valB=0;
+
+                    // Safely cast bits from sc_bv to bool before assigning to valA
+                    for(int bit=0; bit<32; bit++){
+                        bool aBitVal = (bool)aBits[lane*32 + bit];
+                        bool bBitVal = (bool)bBits[lane*32 + bit];
+                        valA[bit]= aBitVal;
+                        valB[bit]= bBitVal;
+                    }
+
+                    sc_uint<32> result=0;
+                    switch(sfr_config.operation.to_uint()) {
+                        case 0: // add
+                            if(use_fp32) result= fp32_add_1c(valA,valB);
+                            else         result= bf16_add_1c(valA,valB);
+                            break;
+                        case 1: // sub
+                            if(use_fp32) result= fp32_sub_1c(valA,valB);
+                            else         result= bf16_sub_1c(valA,valB);
+                            break;
+                        case 2: // mul
+                            if(use_fp32) result= fp32_mul_1c(valA,valB);
+                            else         result= bf16_mul_1c(valA,valB);
+                            break;
+                        case 3: // max => dummy
+                            // naive: compare bits
+                            result= (valA>valB)? valA: valB;
+                            break;
+                        case 4: // sum => dummy => add
+                            if(use_fp32) result= fp32_add_1c(valA,valB);
+                            else         result= bf16_add_1c(valA,valB);
+                            break;
+                        case 5: // reciprocal => placeholder
+                            result=0;
+                            break;
+                        case 6: // inv sqrt even => placeholder
+                            result=0;
+                            break;
+                        case 7: // inv sqrt odd => placeholder
+                            result=0;
+                            break;
+                        case 8: // log => placeholder
+                            result=0;
+                            break;
+                        case 9: // exp => placeholder
+                            result=0;
+                            break;
+                        case 10:// sin => placeholder
+                            result=0;
+                            break;
+                        case 11:// cos => placeholder
+                            result=0;
+                            break;
+                        case 12:// type cast
+                        {
+                            NumFormat sF= (use_fp32? FP32 : (use_bf16? BF16 : INT8));
+                            NumFormat dF= (sfr_config.output_format==0)? FP32 :
+                                          ((sfr_config.output_format==1)? BF16 : INT8);
+                            result= typecast_single_cycle(valA, sF, dF);
+                        }
+                            break;
+                        default:
+                            result=0;
+                            break;
+                    }
+
+                    // store bits => outBits
+                    for(int bit=0; bit<32; bit++){
+                        outBits[lane*32 + bit] = (bool) result[bit];
+                    }
+                }
+
+                auto out_mrf= std::make_shared<malu2mrf>();
+                out_mrf->data= outBits;
+                out_mrf->done=1;
+                o_malu2mrf.write(out_mrf);
+
+                auto out_npu= std::make_shared<malu2npuc>();
+                out_npu->done=1;
+                o_malu2npuc.write(out_npu);
+            }
+        }
+        wait();
+    }
+}
