@@ -384,3 +384,75 @@
      return encode_bf16(outSign, eMax, finalMant);
  }
  
+ // ---------------------- BF16 MUL ----------------------
+
+sc_uint<32> bf16_mul_1c(sc_uint<32> a, sc_uint<32> b)
+{
+    sc_uint<1> sA, sB;
+    sc_uint<8> eA, eB;
+    sc_uint<7> mA, mB;
+
+    decode_bf16(a, sA, eA, mA);
+    decode_bf16(b, sB, eB, mB);
+    sc_uint<1> outSign = sA ^ sB;
+
+    if (g_ops.enable_except) {
+        if (is_bf16_nan(eA, mA) || is_bf16_nan(eB, mB))
+            return encode_bf16(0, 255, 1);  // quiet NaN
+        if (is_bf16_inf(eA, mA) || is_bf16_inf(eB, mB))
+            return encode_bf16(outSign, 255, 0);
+    }
+
+    if (g_ops.enable_subnorm) {
+        if (is_bf16_subnormal(eA, mA)) eA = 1;
+        if (is_bf16_subnormal(eB, mB)) eB = 1;
+    }
+
+    int eSum = (int)eA + (int)eB - 127;
+
+    if (eSum < 1) eSum = 1;
+    else if (eSum > 254) {
+        if (g_ops.enable_clamp)
+            return encode_bf16(outSign, 254, (1 << 7) - 1);
+        else
+            return encode_bf16(outSign, 255, 0);
+    }
+
+    // Include the hidden leading 1 for multiplication
+    sc_uint<8> bigA = (1 << 7) | mA;
+    sc_uint<8> bigB = (1 << 7) | mB;
+
+    // Use 16-bit multiplication (8b x 8b = 16b result)
+    sc_uint<16> prod = (sc_uint<16>)bigA * (sc_uint<16>)bigB;
+
+    // Normalize product: expect top 2 bits to be (1x), if overflowed shift down
+    if ((prod >> 15) & 1) {
+        prod = prod >> 1;
+        eSum++;
+    }
+
+    // extract top 8 bits and round
+    sc_uint<8> sum8 = (prod >> 7) & 0xFF;
+    if (!g_ops.enable_trunc) {
+        bool rbit = (prod >> 6) & 1;
+        if (rbit) sum8 += 1;
+    }
+
+    sc_uint<7> finalMant = sum8.range(6, 0);
+    sc_uint<8> outE = eSum;
+
+    if (g_ops.enable_clamp && outE > 254) {
+        outE = 254;
+        finalMant = (1 << 7) - 1;
+    } else if (outE >= 255) {
+        return encode_bf16(outSign, 255, 0);
+    }
+
+    if (DEBUG_MODE) {
+        std::cout << "[BF16 MUL] a=0x" << std::hex << a << ", b=0x" << b
+                  << ", result=0x" << encode_bf16(outSign, outE, finalMant)
+                  << std::dec << '\n';
+    }
+
+    return encode_bf16(outSign, outE, finalMant);
+}
