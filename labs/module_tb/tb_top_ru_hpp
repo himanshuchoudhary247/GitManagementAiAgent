@@ -1,0 +1,27 @@
+#pragma once
+#include "npucommon.hpp"
+#include "npudefine.hpp"
+#include "ru.hpp"
+#include "tb_ru_funccore.hpp"
+
+class tb_top_ru: public sc_core::sc_module {
+public:
+    SC_HAS_PROCESS(tb_top_ru);
+    tb_top_ru(sc_core::sc_module_name name, int argc, char* argv[]);
+    sc_in<bool> clk;
+    sc_in<bool> reset;
+    ru dut;
+    tb_ru_funccore tb;
+private:
+
+    sc_fifo<npuc2mmu_PTR > npuc2mmu_fifo;
+    sc_fifo<mmu2npuc_PTR > mmu2npuc_fifo;
+    std::array< sc_fifo <mmu2ru_PTR>*, 16 > mmu2ru_fifo; 
+    std::array< sc_fifo < ru2tcm_PTR>*,4 > ru2tcm fifo; 
+    std::arrays< sc_fifo<ru2mlsu_PTR >*, 4> ru2mlsu_fifo; 
+    sc_fifo< sfr_PTR > reg map_fifo;
+
+void init();
+void end_of_elaboration();
+
+};
