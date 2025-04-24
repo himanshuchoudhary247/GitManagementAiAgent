@@ -1,0 +1,18 @@
+{
+    "option_tensor_size_size_m": 4,
+    "option_tensor_size_size_k": 2,
+    "option_tensor_size_size_n": 2,
+  
+    "addr_tensor_matrix_c_base_matrix_c_base_addr": 0x00004000,
+    "addr_tensor_matrix_c_stride_matrix_c_row_stride": 0x00000800,
+    "addr_tensor_matrix_c_stride_matrix_c_col_stride": 0x00000020
+}
+// {
+//     "option_tensor_size_size_m": 4,
+//     "option_tensor_size_size_k": 2,
+//     "option_tensor_size_size_n": 2,
+  
+//     "addr_tensor_matrix_c_base_matrix_c_base_addr": 0x00004000,
+//     "addr_tensor_matrix_c_stride_matrix_c_row_stride": 0x00000800,
+//     "addr_tensor_matrix_c_stride_matrix_c_col_stride": 0x00000020
+// }
