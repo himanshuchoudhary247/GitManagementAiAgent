@@ -1,36 +1,21 @@
 #pragma once
 #include "npucommon.hpp"
 #include "npudefine.hpp"
+#include "sfr/unique_registers.h"          // brings in common_register_map
 #include <queue>
 #include <tuple>
-#include <string>
 
-/*─────────────────────────────────────────────────────────────────────────────
- *  On‑the‑fly configuration (no external header required)
- *───────────────────────────────────────────────────────────────────────────*/
-struct common_register_map {
-    /* tensor size registers (same semantics as LU TB) */
-    uint32_t option_tensor_size_size_m = 4;  // default 4×8 = 32 rows
-    uint32_t option_tensor_size_size_k = 2;  // not used by RU
-    uint32_t option_tensor_size_size_n = 2;  // default 2×32 = 64 cols
-
-    /* matrix‑C base & strides */
-    uint32_t addr_tensor_matrix_c_base_matrix_c_base_addr   = 0x00004000;
-    uint32_t addr_tensor_matrix_c_stride_matrix_c_row_stride= 0x00000800;
-    uint32_t addr_tensor_matrix_c_stride_matrix_c_col_stride= 0x00000020;
-};
-
-/* Very small loader that returns exactly **one** testcase. */
+/* small loader that simply hands the one built‑in config to the TB */
 class tb_config {
 public:
-    tb_config(int argc,char* argv[]);
-    bool get_next_testcase(common_register_map& out);   // true once, then false
+    explicit tb_config(int argc, char* argv[]);
+    bool     get_next_testcase(common_register_map& out);   // returns true once
 private:
     bool delivered_{false};
     common_register_map reg_;
 };
 
-/*──────────────────────────────────────────────────────────────────────────*/
+/* --------------------------------------------------------------------- */
 #define NUM_PORTS 16
 #define NUM_LINES 4
 #define DEBUG_LOG_SEVERITY_TB 1
@@ -42,7 +27,7 @@ public:
                    int argc,
                    char* argv[]);
 
-    /* DUT‑side ports (wired in tb_top_ru) */
+    /* ports identical to MALU TB style */
     sc_in <bool>              clk;
     sc_in <bool>              reset;
     sc_fifo_out<npuc2mmu_PTR> o_npuc2mmu;
@@ -52,21 +37,22 @@ public:
     sc_vector< sc_fifo_in <ru2mlsu_PTR> > i_ru2mlsu;
     sc_fifo_out<sfr_PTR>      o_reg_map;
 
-    void set_id(int v){id=v;}
+    /* MALU‑style setter */
+    void set_id(int v){ id_ = v; }
 
 private:
-    /* TB threads / methods */
+    /* threads */
     void handlerTestMain();
     void respru2tcm();
     void respru2mlsu();
-    void receive_done_micro();     // dummy for completeness
+    void receive_done_micro();   /* dummy */
 
+    /* helpers */
     void run_testcase(const common_register_map& cfg);
     void golden_addr_gen_matrix_c(uint32_t M,uint32_t N,
                                   uint32_t base,uint32_t rs,uint32_t cs);
-    void compare_golden_output_tcm (ru2tcm_PTR  pkt);
-    void compare_golden_output_mlsu(ru2mlsu_PTR pkt);
-
+    void compare_golden_output_tcm (ru2tcm_PTR  p);
+    void compare_golden_output_mlsu(ru2mlsu_PTR p);
     mmu2ru_PTR make_mmu_pkt(uint32_t r,uint32_t c);
     sfr_PTR    make_sfr(bool fused);
 
@@ -74,5 +60,5 @@ private:
     tb_config cfg_loader_;
     std::queue<std::tuple<std::uint64_t,bool>> golden_q_;
     bool done_micro{false};
-    int  id{0};
+    int  id_{0};
 };
