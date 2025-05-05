@@ -1,3 +1,6 @@
+#include "tb_top_ru.hpp"
+#include <systemc>
+
 tb_top_ru::tb_top_ru(sc_core::sc_module_name n,int argc,char* argv[])
 : sc_module(n)
 , clk("clk"), reset("reset")
