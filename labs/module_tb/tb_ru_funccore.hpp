@@ -4,7 +4,7 @@
 #include "mmu2ru.hpp"
 #include "ru2tcm.hpp"
 #include "ru2mlsu.hpp"
-#include "sfr/unique_registers.h"   // brings common_register_map
+#include "sfr/unique_registers.h"     // common_register_map
 #include "tb_config.hpp"
 #include <queue>
 
@@ -13,7 +13,6 @@ public:
     SC_HAS_PROCESS(tb_ru_funccore);
     explicit tb_ru_funccore(sc_core::sc_module_name);
 
-    /* DUT‑side ports */
     sc_in <bool>              clk;
     sc_in <bool>              reset;
     sc_fifo_out<npuc2mmu_PTR> o_npuc2mmu;
@@ -24,13 +23,18 @@ public:
     sc_fifo_out<sfr_PTR>      o_reg_map;
 
 private:
-    void main_thread();   /* top controller */
-    void resp_tcm();      /* compare RU→TCM packets */
-    void resp_mlsu();     /* compare RU→MLSU packets */
+    /* main control thread (replaces earlier 'handler') */
+    void main_thread();
 
+    /* monitors */
+    void resp_tcm();
+    void resp_mlsu();
+
+    /* helpers */
     void run_testcase(const common_register_map& cfg);
     mmu2ru_PTR make_pkt(bool last);
+    uint16_t   addr16(uint32_t r,uint32_t c);
 
     std::queue<uint16_t> gold_tcm_;
-    std::size_t          gold_mlsu_ = 0;
+    std::size_t          gold_mlsu_{0};
 };
