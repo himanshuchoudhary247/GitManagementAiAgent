@@ -1,123 +1,101 @@
 /*********************
 * Author : ABC at abc
-* Project: Pname
 * File   : ru_funccore.cpp
-* Notes  :
-*   – Implements the behavioural model of the Routing-Unit core.
-*   – Works with the fixed public interface in ru_funccore.hpp (unchanged).
-*   – Computes a 48-bit physical TCM address for every 32-byte C-matrix
-*     chunk (row,col) and decides, per the FUSED_OPERATION SFR bit,
-*     whether to forward the packet to TCM (ru2tcm) or straight to
-*     the Math-Engine load-store path (ru2mlsu).
 *********************/
 #include "ru_funccore.hpp"
-#include <cstring>          // std::memcpy
-#include <iomanip>
-#include <sstream>
+#include <cstring>
 
-/*-----------------------------------------------------------------------------
- * Helpers
- *---------------------------------------------------------------------------*/
-namespace {
-/* Map (row,col) → 5-bit bank id (0-31).  Rows are grouped by 16, columns by 2.
- *
- * ┌──── row low-bits (0-15) ────┐
- * bank =  (row & 0xF) * 2 | (col >> 1)
- */
-inline std::uint32_t bank_of(std::uint32_t row, std::uint32_t col)
+constexpr int  NUM_PORTS = 16;
+constexpr int  NUM_LINES = 4;
+
+/* ── helpers ────────────────────────────────────────────────────────────*/
+inline uint16_t make_addr16(uint32_t r,uint32_t c)
 {
-    return ((row & 0xF) << 1U) | (col >> 1U);
+    uint16_t bank   = ((r & 0xF) << 1) | (c >> 1);        // 0‑31
+    uint16_t offset = (r>>4)*64 + ((c&1)?32:0);           // 0‑224
+    return (bank<<11)|offset;                             // 5+11 bits
 }
+inline unsigned line_of(uint16_t addr16){ return (addr16>>11)>>3; } // bank>>3
 
-/* Generate byte offset inside one 64-B bank-row. */
-inline std::uint32_t offset_in_bank(std::uint32_t row, std::uint32_t col)
-{
-    const std::uint32_t bank_row = row >> 4U;          // every 16 rows → next 64 B line
-    const std::uint32_t chunk    = (col & 1U) ? 32U : 0U;
-    return bank_row * 64U + chunk;
-}
-
-/* Compose 48-bit address: upper 16 b = bank id (only 5 used); lower 32 = offset. */
-inline std::uint64_t make_addr(std::uint32_t row, std::uint32_t col)
-{
-    return (static_cast<std::uint64_t>(bank_of(row,col)) << 32) |
-            offset_in_bank(row,col);
-}
-
-/* Each eight banks (0-7, 8-15, …) share the same 512-B output line. */
-inline std::size_t line_for_bank(std::uint32_t bank) { return bank >> 3; }
-} // anonymous-ns
-
-/*-----------------------------------------------------------------------------
- * Constructor + process
- *---------------------------------------------------------------------------*/
+/* ── constructor ───────────────────────────────────────────────────────*/
 ru_funccore::ru_funccore(sc_core::sc_module_name n)
 : sc_module(n)
-, clk          ("clk")
-, reset        ("reset")
-, i_npuc2mmu   ("i_npuc2mmu")
-, i_mmu2npuc   ("i_mmu2npuc")
-, i_mmu2ru     ("i_mmu2ru" , 16)
-, o_ru2tcm     ("o_ru2tcm" ,  4)
-, o_ru2mlsu    ("o_ru2mlsu",  4)
-, i_reg_map    ("i_reg_map")
+, clk("clk"),reset("reset")
+, i_npuc2mmu("i_npuc2mmu")
+, i_mmu2npuc("i_mmu2npuc")
+, i_mmu2ru  ("i_mmu2ru" ,NUM_PORTS)
+, o_ru2tcm  ("o_ru2tcm" ,NUM_LINES)
+, o_ru2mlsu ("o_ru2mlsu",NUM_LINES)
+, i_reg_map ("i_reg_map")
 {
-    SC_CTHREAD(main_thread, clk.pos());
+    SC_CTHREAD(main_thread,clk.pos());
     reset_signal_is(reset,true);
 }
 
-void ru_funccore::set_Id(int v) { id = v; }
+void ru_funccore::set_Id(int v){ id=v; }
 
-/*-----------------------------------------------------------------------------
- * Main behavioural thread
- *---------------------------------------------------------------------------*/
+/* ── internal per‑port counter state ───────────────────────────────────*/
+struct state { uint32_t row=0,col=0; };
+state st[NUM_PORTS];
+
+/* ── main behaviour ────────────────────────────────────────────────────*/
 void ru_funccore::main_thread()
 {
-    bool fused = false;             // current FUSED_OPERATION bit
-    wait();                         // reset cycle
+    bool fused=false;
+    sc_bv<512> pack[NUM_LINES];   // 4×128b aggregator
+    uint8_t    fill[NUM_LINES]={0};
 
-    while (true)
+    wait();
+    while(true)
     {
-        /* ---- 1) snoop SFR stream (non-blocking) ------------------------ */
-        if (i_reg_map.num_available())
-        {
-            sfr_PTR p = i_reg_map.read();          // concrete SFR type is unknown.
-            const std::uint32_t word = *reinterpret_cast<std::uint32_t const*>(p);
-            fused = (word >> 20) & 0x1;
-#if DEBUG_LOG_SEVERITY
-            std::cout << sc_time_stamp() << "  [RU" << id << "] "
-                      << "SFR update → fused=" << fused << '\n';
-#endif
+        /* read SFR stream (non‑blocking) */
+        if(i_reg_map.num_available()){
+            auto sfr=i_reg_map.read();
+            uint32_t w=*reinterpret_cast<uint32_t*>(sfr.get());
+            fused=((w>>20)&1);
         }
 
-        /* ---- 2) service up to one packet per port this cycle ----------- */
-        for (std::size_t port=0; port<i_mmu2ru.size(); ++port)
+        /* service all MMU ports (one pkt each) */
+        for(int p=0;p<NUM_PORTS;++p)
         {
-            if (!i_mmu2ru[port].num_available()) continue;
+            if(!i_mmu2ru[p].num_available()) continue;
+            mu2ru_PTR in=i_mmu2ru[p].read();
 
-            /* The minimal assumed packet shape: (row,col,payload[32]). */
-            mmu2ru_PTR in = i_mmu2ru[port].read();
-            const std::uint32_t r = in->row;
-            const std::uint32_t c = in->col;
-            const std::uint64_t addr = make_addr(r,c);
-            const std::size_t  line  = line_for_bank(static_cast<std::uint32_t>(addr>>32));
+            uint32_t r=st[p].row;
+            uint32_t c=st[p].col;
+            uint16_t addr16=make_addr16(r,c);
+            unsigned line=line_of(addr16);
 
-            if (fused)   /* ---- direct to MLSU -------------------------------- */
-            {
-                ru2mlsu_PTR out = new ru2mlsu_t;
-                out->addr = addr;
-                std::memcpy(out->payload, in->payload, 32);
-                o_ru2mlsu[line].write(out);
+            /* pack 16×8b → 128b at offset fill*128 */
+            for(int b=0;b<16;++b)
+                pack[line].range( fill[line]*128+8*b+7,
+                                  fill[line]*128+8*b   )
+                        = in->C_data[b];
+            bool four_chunks=(++fill[line]==4);
+
+            if(four_chunks){
+                /* emit one 512‑bit packet */
+                if(fused){
+                    ru2mlsu_PTR o(new ru2mlsu);
+                    o->data = pack[line];
+                    o->done = in->done;
+                    o_ru2mlsu[line].write(o);
+                }else{
+                    ru2tcm_PTR o(new ru2tcm);
+                    o->data    = pack[line];
+                    o->address = addr16;
+                    o->done    = in->done;
+                    o_ru2tcm[line].write(o);
+                }
+                fill[line]=0; pack[line]=0;
             }
-            else         /* ---- store to TCM ---------------------------------- */
-            {
-                ru2tcm_PTR out = new ru2tcm_t;
-                out->addr = addr;
-                std::memcpy(out->payload, in->payload, 32);
-                o_ru2tcm[line].write(out);
+
+            /* advance indices on last flag */
+            if(in->done==1){
+                st[p].col++;
+                if(st[p].col==64){ st[p].col=0; st[p].row++; }
             }
         }
-
-        wait();     // next cycle
+        wait();
     }
 }
