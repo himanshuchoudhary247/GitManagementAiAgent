@@ -1,19 +1,21 @@
 #include "tb_ru_funccore.hpp"
 #include <cassert>
 #include <iostream>
+#include <memory>
 
-/* helper to build 16‑bit address */
-static uint16_t a16(uint32_t r,uint32_t c){
-    uint16_t bank=((r&0xF)<<1)|(c>>1);
-    uint16_t off =(r>>4)*64+((c&1)?32:0);
-    return uint16_t((bank<<11)|off);
+/* helper: 32‑row/col address → 16‑bit bank+offset */
+static uint16_t addr16(uint32_t r,uint32_t c)
+{
+    uint16_t bank   = ((r & 0xF) << 1) | (c >> 1);
+    uint16_t offset = (r >> 4) * 64 + ((c & 1) ? 32 : 0);
+    return uint16_t((bank << 11) | offset);
 }
 
 /* build one mmu2ru packet */
 mmu2ru_PTR tb_ru_funccore::make_pkt(bool last)
 {
     mmu2ru_PTR p(new mmu2ru);
-    for(int i=0;i<16;i++) p->C_data[i]=sc_dt::sc_bv<8>(i);
+    for (int i = 0; i < 16; ++i) p->C_data[i] = sc_dt::sc_bv<8>(i);
     p->done = last;
     return p;
 }
@@ -23,88 +25,91 @@ tb_ru_funccore::tb_ru_funccore(sc_core::sc_module_name n)
 : sc_module(n)
 , clk("clk"), reset("reset")
 , o_npuc2mmu("o_npuc2mmu"), o_mmu2npuc("o_mmu2npuc")
-, o_mmu2ru("o_mmu2ru",16)
-, i_ru2tcm("i_ru2tcm",4), i_ru2mlsu("i_ru2mlsu",4)
+, o_mmu2ru("o_mmu2ru", 16)
+, i_ru2tcm("i_ru2tcm", 4), i_ru2mlsu("i_ru2mlsu", 4)
 , o_reg_map("o_reg_map")
 {
-    SC_THREAD(handler);   sensitive << clk.pos();  dont_initialize();
-    SC_THREAD(resp_tcm);  for(int i=0;i<4;i++)
-                              sensitive << i_ru2tcm[i].data_written_event();
-                          dont_initialize();
-    SC_THREAD(resp_mlsu); for(int i=0;i<4;i++)
-                              sensitive << i_ru2mlsu[i].data_written_event();
-                          dont_initialize();
+    SC_THREAD(main_thread); sensitive << clk.pos();
+
+    SC_THREAD(resp_tcm);
+    for (int i = 0; i < 4; ++i)
+        sensitive << i_ru2tcm[i].data_written_event();
+
+    SC_THREAD(resp_mlsu);
+    for (int i = 0; i < 4; ++i)
+        sensitive << i_ru2mlsu[i].data_written_event();
 }
 
-/* ── top‑level TB thread ───────────────────────────────────────────────*/
-void tb_ru_funccore::handler()
+/* ── main control thread ───────────────────────────────────────────────*/
+void tb_ru_funccore::main_thread()
 {
-    COMMON_REGISTERS cfg;
+    /* load testcase parameters */
+    common_register_map cfg;
     tb_config::instance().get_cfg_registers(cfg);
 
-    /* push full‑width SFR (non‑fused initially) */
-    sfr_PTR map = std::make_shared<COMMON_REGISTERS>(cfg);
-    map->MODE_TENSOR = 0;              // FUSED_OPERATION = 0
-    o_reg_map.write(map);
+    /* push SFR (32‑bit mode register) – start in non‑fused mode (bit‑20 = 0) */
+    o_reg_map.write(std::make_shared<uint32_t>(0u));
 
-    run_tc(*map);
+    run_testcase(cfg);
 
-    /* simulation ends */
+    /* end of simulation */
     sc_core::sc_stop();
 }
 
-/* ── run single testcase (2 phases) ────────────────────────────────────*/
-void tb_ru_funccore::run_tc(const COMMON_REGISTERS& cfg)
+/* ── run_testcase : two phases (TCM, then MLSU) ────────────────────────*/
+void tb_ru_funccore::run_testcase(const common_register_map& cfg)
 {
-    uint32_t M = cfg.option_tensor_size_size_m * 8;
-    uint32_t N = cfg.option_tensor_size_size_n * 32;
+    uint32_t M = cfg.option_tensor_size_size_m * 8;   // total rows
+    uint32_t N = cfg.option_tensor_size_size_n * 32;  // total cols
 
-    /* phase‑1 : results go to TCM */
-    for(uint32_t r=0;r<M;r++)
-        for(uint32_t c=0;c<N;c++){
-            bool last = (r==M-1 && c==N-1);
+    /* ---------- Phase‑1 : non‑fused → expect RU→TCM ------------------- */
+    for (uint32_t r = 0; r < M; ++r)
+        for (uint32_t c = 0; c < N; ++c) {
+            bool last = (r == M - 1) && (c == N - 1);
             o_mmu2ru[r & 0xF].write(make_pkt(last));
-            gold_tcm_.push(a16(r,c));
+            gold_tcm_.push(addr16(r, c));
         }
 
-    /* phase‑2 : set FUSED_OPERATION bit → results to MLSU */
-    wait(500, sc_core::SC_NS);
+    /* ---------- Phase‑2 : fused → expect RU→MLSU ---------------------- */
+    wait(500, sc_core::SC_NS);                // drain pipeline
 
-    sfr_PTR fusedSfr = std::make_shared<COMMON_REGISTERS>(cfg);
-    fusedSfr->MODE_TENSOR = 1u << 20;          // bit‑20 = 1 (fused)
-    o_reg_map.write(fusedSfr);
+    /* set FUSED_OPERATION bit (bit‑20) */
+    o_reg_map.write(std::make_shared<uint32_t>(1u << 20));
 
-    for(uint32_t r=0;r<M;r++)
-        for(uint32_t c=0;c<N;c++){
-            bool last = (r==M-1 && c==N-1);
-            o_mmu2ru[(r+1) & 0xF].write(make_pkt(last));
+    for (uint32_t r = 0; r < M; ++r)
+        for (uint32_t c = 0; c < N; ++c) {
+            bool last = (r == M - 1) && (c == N - 1);
+            o_mmu2ru[(r + 1) & 0xF].write(make_pkt(last));
             ++gold_mlsu_;
         }
 }
 
-/* ── monitors ──────────────────────────────────────────────────────────*/
+/* ── monitor RU→TCM packets ────────────────────────────────────────────*/
 void tb_ru_funccore::resp_tcm()
 {
-    while(true){
-        for(int l=0;l<4;l++)
-            if(i_ru2tcm[l].num_available()){
-                auto p = i_ru2tcm[l].read();
-                assert(!gold_tcm_.empty());
-                uint16_t exp = gold_tcm_.front(); gold_tcm_.pop();
-                assert(p->address.to_uint() == exp);
-            }
+    while (true) {
+        for (int l = 0; l < 4; ++l) {
+            if (!i_ru2tcm[l].num_available()) continue;
+            ru2tcm_PTR p = i_ru2tcm[l].read();
+            assert(!gold_tcm_.empty());
+            uint16_t exp = gold_tcm_.front();
+            gold_tcm_.pop();
+            assert(p->address.to_uint() == exp && "TCM address mismatch");
+        }
         wait(sc_core::SC_ZERO_TIME);
     }
 }
 
+/* ── monitor RU→MLSU packets ───────────────────────────────────────────*/
 void tb_ru_funccore::resp_mlsu()
 {
-    while(true){
-        for(int l=0;l<4;l++)
-            if(i_ru2mlsu[l].num_available()){
-                i_ru2mlsu[l].read();      // no address to compare
-                assert(gold_mlsu_ > 0); --gold_mlsu_;
-            }
+    while (true) {
+        for (int l = 0; l < 4; ++l) {
+            if (!i_ru2mlsu[l].num_available()) continue;
+            i_ru2mlsu[l].read();               // only counting packets
+            assert(gold_mlsu_ > 0);
+            --gold_mlsu_;
+        }
         wait(sc_core::SC_ZERO_TIME);
     }
 }

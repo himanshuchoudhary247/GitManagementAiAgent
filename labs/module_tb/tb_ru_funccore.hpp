@@ -4,7 +4,7 @@
 #include "mmu2ru.hpp"
 #include "ru2tcm.hpp"
 #include "ru2mlsu.hpp"
-#include "sfr/common_registers.hpp"     // brings COMMON_REGISTERS + sfr_PTR
+#include "sfr/unique_registers.h"   // brings common_register_map
 #include "tb_config.hpp"
 #include <queue>
 
@@ -24,13 +24,13 @@ public:
     sc_fifo_out<sfr_PTR>      o_reg_map;
 
 private:
-    void handler();   /* drives testcase */
-    void resp_tcm();  /* compares RU→TCM */
-    void resp_mlsu(); /* compares RU→MLSU */
+    void main_thread();   /* top controller */
+    void resp_tcm();      /* compare RU→TCM packets */
+    void resp_mlsu();     /* compare RU→MLSU packets */
 
-    void run_tc(const COMMON_REGISTERS& cfg);
+    void run_testcase(const common_register_map& cfg);
     mmu2ru_PTR make_pkt(bool last);
 
     std::queue<uint16_t> gold_tcm_;
-    std::size_t          gold_mlsu_{0};
+    std::size_t          gold_mlsu_ = 0;
 };
