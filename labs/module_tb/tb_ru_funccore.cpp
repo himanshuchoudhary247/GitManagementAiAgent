@@ -2,13 +2,15 @@
 #include <cassert>
 #include <iostream>
 
-/* local helpers -------------------------------------------------------*/
+/* helper: build 16‑bit bank+offset address */
 uint16_t tb_ru_funccore::addr16(uint32_t r,uint32_t c)
 {
     uint16_t bank   = ((r & 0xF) << 1) | (c >> 1);
     uint16_t offset = (r >> 4) * 64 + ((c & 1) ? 32 : 0);
     return uint16_t((bank << 11) | offset);
 }
+
+/* build one packet for MMU→RU */
 mmu2ru_PTR tb_ru_funccore::make_pkt(bool last)
 {
     mmu2ru_PTR p(new mmu2ru);
@@ -17,16 +19,15 @@ mmu2ru_PTR tb_ru_funccore::make_pkt(bool last)
     return p;
 }
 
-/* constructor ---------------------------------------------------------*/
+/* ── ctor ──────────────────────────────────────────────────────────────*/
 tb_ru_funccore::tb_ru_funccore(sc_core::sc_module_name n)
 : sc_module(n)
 , clk("clk"), reset("reset")
 , o_npuc2mmu("o_npuc2mmu"), o_mmu2npuc("o_mmu2npuc")
-, o_mmu2ru("o_mmu2ru", 16)
-, i_ru2tcm("i_ru2tcm", 4), i_ru2mlsu("i_ru2mlsu", 4)
-, o_reg_map("o_reg_map")
+, o_mmu2ru("o_mmu2ru",16),  i_ru2tcm("i_ru2tcm",4)
+, i_ru2mlsu("i_ru2mlsu",4), o_reg_map("o_reg_map")
 {
-    SC_THREAD(main_thread); sensitive << clk.pos();
+    SC_THREAD(handler); sensitive << clk.pos();
 
     SC_THREAD(resp_tcm);
     for (int i = 0; i < 4; ++i)
@@ -37,49 +38,49 @@ tb_ru_funccore::tb_ru_funccore(sc_core::sc_module_name n)
         sensitive << i_ru2mlsu[i].data_written_event();
 }
 
-/* main control thread -------------------------------------------------*/
-void tb_ru_funccore::main_thread()
+/* ── main control thread (reads config & drives testcase) ─────────────*/
+void tb_ru_funccore::handler()
 {
     common_register_map cfg;
-    tb_config::instance().get_cfg_registers(cfg);
+    tb_config::instance().get_cfg_registers(cfg);   // read JSON
 
-    /* push MODE_TENSOR (bit‑20 = 0) */
+    /* push MODE_TENSOR (FUSED_OPERATION = 0) */
     o_reg_map.write(std::make_shared<uint32_t>(0u));
 
     run_testcase(cfg);
 
-    /* end simulation */
+    /* stop simulation when queues empty & checks pass */
     sc_core::sc_stop();
 }
 
-/* run one testcase (TCM, then MLSU) -----------------------------------*/
+/* ── run single testcase: non‑fused then fused ────────────────────────*/
 void tb_ru_funccore::run_testcase(const common_register_map& cfg)
 {
     uint32_t M = cfg.option_tensor_size_size_m * 8;
     uint32_t N = cfg.option_tensor_size_size_n * 32;
 
-    /* ---- phase‑1 : non‑fused (RU→TCM) ---- */
-    for (uint32_t r = 0; r < M; ++r)
-        for (uint32_t c = 0; c < N; ++c) {
-            bool last = (r == M - 1) && (c == N - 1);
+    /* --- phase‑1 : results to TCM --- */
+    for (uint32_t r=0; r<M; ++r)
+        for (uint32_t c=0; c<N; ++c) {
+            bool last = (r==M-1) && (c==N-1);
             o_mmu2ru[r & 0xF].write(make_pkt(last));
-            gold_tcm_.push(addr16(r, c));
+            gold_tcm_.push(addr16(r,c));
         }
 
-    wait(500, sc_core::SC_NS);
+    wait(500, sc_core::SC_NS);   // allow pipeline flush
 
-    /* ---- phase‑2 : fused (RU→MLSU) ---- */
-    o_reg_map.write(std::make_shared<uint32_t>(1u << 20));  // set FUSED bit
+    /* --- phase‑2 : set fused bit → MLSU --- */
+    o_reg_map.write(std::make_shared<uint32_t>(1u << 20));
 
-    for (uint32_t r = 0; r < M; ++r)
-        for (uint32_t c = 0; c < N; ++c) {
-            bool last = (r == M - 1) && (c == N - 1);
-            o_mmu2ru[(r + 1) & 0xF].write(make_pkt(last));
+    for (uint32_t r=0; r<M; ++r)
+        for (uint32_t c=0; c<N; ++c) {
+            bool last = (r==M-1) && (c==N-1);
+            o_mmu2ru[(r+1)&0xF].write(make_pkt(last));
             ++gold_mlsu_;
         }
 }
 
-/* monitors ------------------------------------------------------------*/
+/* ── monitor RU→TCM ---------------------------------------------------*/
 void tb_ru_funccore::resp_tcm()
 {
     while (true) {
@@ -93,12 +94,14 @@ void tb_ru_funccore::resp_tcm()
         wait(sc_core::SC_ZERO_TIME);
     }
 }
+
+/* ── monitor RU→MLSU --------------------------------------------------*/
 void tb_ru_funccore::resp_mlsu()
 {
     while (true) {
         for (int l = 0; l < 4; ++l) {
             if (!i_ru2mlsu[l].num_available()) continue;
-            i_ru2mlsu[l].read();
+            i_ru2mlsu[l].read();                 // content not checked
             assert(gold_mlsu_ > 0); --gold_mlsu_;
         }
         wait(sc_core::SC_ZERO_TIME);
