@@ -18,20 +18,20 @@ inline uint16_t make_addr16(uint32_t r,uint32_t c)
 inline unsigned line_of(uint16_t addr16){ return (addr16>>11)>>3; } // bank>>3
 
 /* ── constructor ───────────────────────────────────────────────────────*/
-ru_funccore::ru_funccore(sc_core::sc_module_name n)
-: sc_module(n)
-, clk("clk"),reset("reset")
-, i_npuc2mmu("i_npuc2mmu")
-, i_mmu2npuc("i_mmu2npuc")
-, i_mmu2ru  ("i_mmu2ru" ,NUM_PORTS)
-, o_ru2tcm  ("o_ru2tcm" ,NUM_LINES)
-, o_ru2mlsu ("o_ru2mlsu",NUM_LINES)
-, i_reg_map ("i_reg_map")
+#include "ru_funccore.hpp"
+#include "mmu2ru.hpp"
+#include "ru2tcm.hpp"
+#include "ru2mlsu.hpp"
+
+ru_funccore::ru_funccore(sc_core::sc_module_name name)
+: sc_module(name), clk("clk"), reset("reset"),
+  i_npuc2mmu("i_npuc2mmu"), i_mmu2npuc("i_mmu2npuc"),
+  i_mmu2ru ("i_mmu2ru",16), o_ru2tcm("o_ru2tcm",4),
+  o_ru2mlsu("o_ru2mlsu",4), i_reg_map("i_reg_map")
 {
-    SC_CTHREAD(main_thread,clk.pos());
+    SC_CTHREAD(main_thread, clk.pos());
     reset_signal_is(reset,true);
 }
-
 void ru_funccore::set_Id(int v){ id=v; }
 
 /* ── internal per‑port counter state ───────────────────────────────────*/
