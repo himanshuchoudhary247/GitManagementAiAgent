@@ -1,20 +1,13 @@
 #include "tb_top_ru.hpp"
 
-int sc_main(int argc, char* argv[])
-{
-    sc_clock        clk("clk", 10, SC_NS);
-    sc_signal<bool> reset;
+int sc_main(int argc,char* argv[]){
+    sc_core::sc_clock clk("clk",10,SC_NS);
+    sc_core::sc_signal<bool> rst;
+    tb_top_ru top("top",argc,argv);
+    top.clk(clk); top.reset(rst);
 
-    tb_top_ru top("top", argc, argv);
-    top.clk   (clk);
-    top.reset (reset);
-
-    // simple reset pulse
-    reset.write(true);
-    sc_start(20, SC_NS);
-    reset.write(false);
-
-    sc_start();  // until sc_stop()
+    rst = true; sc_core::sc_start(20,SC_NS);
+    rst = false; sc_core::sc_start();
 
     return 0;
 }
